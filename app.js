@@ -23,7 +23,6 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json({ limit: "200mb" }));
 
 app.use(loggerMiddleware);
-
 app.use(cors());
 
 app.use(
@@ -35,7 +34,6 @@ app.use(
 );
 
 app.set("view engine", "ejs");
-
 app.use(express.static("public"));
 
 // Swagger documentation
@@ -45,7 +43,7 @@ app.use(
   swaggerUi.setup(swaggerSpecs, {
     explorer: true,
     customCss: ".swagger-ui .topbar { display: none }",
-    customSiteTitle: "User Service API Documentation",
+    customSiteTitle: "Audit Service API Documentation",
   })
 );
 
@@ -53,7 +51,7 @@ app.get("/", (req, res) => {
   res.render("index", { title: "Audit Service" });
 });
 
-app.use("/api/v1", require("./routes/index"));
+// app.use("/api/v1", require("./routes/index"));
 
 app.use(function (req, res, next) {
   next(createError(404));
@@ -67,5 +65,21 @@ app.use((err, req, res, next) => {
 process.on("SIGINT", async () => {
   process.exit(0);
 });
+
+// const { connectRabbitMQ } = require("message-bus");
+// const userEventListener = require("./rabbitMQ/listeners/userEventListener");
+
+// (async () => {
+//   await connectRabbitMQ({
+//     amqpUrl: process.env.RABBITMQ_URL || "amqp://localhost",
+//     retryAttempts: 10,
+//     retryDelay: 3000,
+//   });
+
+//   console.log("🎉 RabbitMQ is ready in Audit Service");
+
+//   // Start listening to events after RabbitMQ is ready
+//   await userEventListener();
+// })();
 
 module.exports = app;

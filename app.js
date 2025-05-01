@@ -66,20 +66,20 @@ process.on("SIGINT", async () => {
   process.exit(0);
 });
 
-// const { connectRabbitMQ } = require("message-bus");
-// const userEventListener = require("./rabbitMQ/listeners/userEventListener");
+const { connectRabbitMQ } = require("message-bus");
+const userEventListener = require("./rabbitMQ/listeners/userEventListener");
 
-// (async () => {
-//   await connectRabbitMQ({
-//     amqpUrl: process.env.RABBITMQ_URL || "amqp://localhost",
-//     retryAttempts: 10,
-//     retryDelay: 3000,
-//   });
+(async () => {
+  await connectRabbitMQ({
+    amqpUrl: process.env.RABBITMQ_URL || "amqp://localhost",
+    retryAttempts: 10,
+    retryDelay: 3000,
+  });
 
-//   console.log("🎉 RabbitMQ is ready in Audit Service");
+  console.log("🎉 RabbitMQ is ready in Audit Service");
 
-//   // Start listening to events after RabbitMQ is ready
-//   await userEventListener();
-// })();
+  // Start listening to events after RabbitMQ is ready
+  await userEventListener();
+})();
 
 module.exports = app;

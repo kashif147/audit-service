@@ -68,6 +68,7 @@ process.on("SIGINT", async () => {
 
 const { connectRabbitMQ } = require("message-bus");
 const userEventListener = require("./rabbitMQ/listeners/userEventListener");
+const lookupTypeEventListener = require("./rabbitMQ/listeners/lookupTypeEventListener");
 
 (async () => {
   await connectRabbitMQ({
@@ -80,6 +81,7 @@ const userEventListener = require("./rabbitMQ/listeners/userEventListener");
 
   // Start listening to events after RabbitMQ is ready
   await userEventListener();
+  await lookupTypeEventListener();
 })();
 
 module.exports = app;

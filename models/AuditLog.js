@@ -21,6 +21,10 @@ const auditLogSchema = new mongoose.Schema({
   userLastLogin: {
     type: Date,
   },
+  details: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {},
+  },
   createdAt: {
     type: Date,
     default: Date.now,

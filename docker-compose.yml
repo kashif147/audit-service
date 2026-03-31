@@ -10,6 +10,9 @@ services:
     env_file:
       - /home/deploy/config/.env.common
       - .env.staging
+    depends_on:
+      reporting-postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4006/health"]
       interval: 10s

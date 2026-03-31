@@ -4,7 +4,7 @@ import { connectDB } from "../src/config/db.js";
 import logger from "../src/config/logger.js";
 
 const PORT = process.env.PORT || 4006;
-// deployment test
+
 async function start() {
   await connectDB();
 
@@ -17,6 +17,6 @@ async function start() {
 }
 
 start().catch((err) => {
-  logger.error({ error: err.message }, "Failed to start audit service");
+  logger.error({ err }, "Failed to start audit service");
   process.exit(1);
 });

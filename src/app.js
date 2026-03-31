@@ -41,7 +41,7 @@ async function initRabbitMQ() {
     await initEventSystem();
     await setupConsumers();
   } catch (err) {
-    logger.error({ error: err.message }, "RabbitMQ init failed — audit consumers offline");
+    logger.error({ err }, "RabbitMQ init failed — audit consumers offline");
   }
 }
 

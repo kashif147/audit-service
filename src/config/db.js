@@ -35,7 +35,7 @@ export async function connectDB() {
   logger.info("PostgreSQL connected");
 
   pool.on("error", (err) => {
-    logger.error({ error: err.message }, "PostgreSQL pool error");
+    logger.error({ err }, "PostgreSQL pool error");
   });
 }
 

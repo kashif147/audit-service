@@ -3,7 +3,7 @@ name: Deploy Audit Service
 on:
   push:
     branches:
-      - gateway
+      - main
   workflow_dispatch:
 
 jobs:

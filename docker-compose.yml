@@ -1,0 +1,27 @@
+services:
+  audit-service:
+    container_name: audit-service
+    build: .
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    env_file:
+      - /home/deploy/config/.env.common
+      - .env.staging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    ports:
+      - "4006:4006"
+    restart: always
+    networks:
+      - gateway_app-net
+
+networks:
+  gateway_app-net:
+    external: true

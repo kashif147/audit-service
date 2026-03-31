@@ -1,0 +1,49 @@
+{
+  "info": {
+    "name": "Audit Service API",
+    "description": "Latest API collection for audit-service",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000", "type": "string" },
+    { "key": "authToken", "value": "", "type": "string" },
+    { "key": "auditId", "value": "", "type": "string" },
+    { "key": "resourceType", "value": "profile", "type": "string" },
+    { "key": "resourceId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Audit Logs",
+      "item": [
+        {
+          "name": "List Audit Logs",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/audit-logs", "host": ["{{baseUrl}}"], "path": ["api", "audit-logs"] }
+          }
+        },
+        {
+          "name": "Audit Summary",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/audit-logs/summary", "host": ["{{baseUrl}}"], "path": ["api", "audit-logs", "summary"] }
+          }
+        },
+        {
+          "name": "Resource Audit History",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/audit-logs/resource/{{resourceType}}/{{resourceId}}", "host": ["{{baseUrl}}"], "path": ["api", "audit-logs", "resource", "{{resourceType}}", "{{resourceId}}"] }
+          }
+        },
+        {
+          "name": "Get Audit Log By ID",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/audit-logs/{{auditId}}", "host": ["{{baseUrl}}"], "path": ["api", "audit-logs", "{{auditId}}"] }
+          }
+        }
+      ]
+    }
+  ]
+}

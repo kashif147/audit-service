@@ -5,6 +5,7 @@ import pinoHttp from "pino-http";
 import logger from "./config/logger.js";
 import responseMiddleware from "./middlewares/response.mw.js";
 import errorHandler from "./middlewares/errorHandler.js";
+import { ensureAuthenticated } from "./middlewares/auth.js";
 import routes from "./routes/index.js";
 import {
   initEventSystem,
@@ -25,8 +26,8 @@ app.use(responseMiddleware);
 app.get("/health", (req, res) => res.status(200).json({ status: "UP" }));
 app.get("/ready",  (req, res) => res.success({ ok: true }));
 
-// ── API ───────────────────────────────────────────────────────────────────────
-app.use("/api", routes);
+// ── API (auth identity → policy per route) ───────────────────────────────────
+app.use("/api", ensureAuthenticated, routes);
 
 // ── Error handler ─────────────────────────────────────────────────────────────
 app.use(errorHandler);

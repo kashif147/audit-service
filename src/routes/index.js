@@ -5,12 +5,29 @@ import {
   getResourceAuditHistory,
   getAuditSummary,
 } from "../controllers/auditLog.controller.js";
+import { defaultPolicyMiddleware } from "../middlewares/policy.middleware.js";
 
 const router = express.Router();
 
-router.get("/audit-logs",                              listAuditLogs);
-router.get("/audit-logs/summary",                      getAuditSummary);
-router.get("/audit-logs/resource/:resourceType/:resourceId", getResourceAuditHistory);
-router.get("/audit-logs/:id",                          getAuditLog);
+router.get(
+  "/audit-logs",
+  defaultPolicyMiddleware.requirePermission("audit", "read"),
+  listAuditLogs
+);
+router.get(
+  "/audit-logs/summary",
+  defaultPolicyMiddleware.requirePermission("audit", "read"),
+  getAuditSummary
+);
+router.get(
+  "/audit-logs/resource/:resourceType/:resourceId",
+  defaultPolicyMiddleware.requirePermission("audit", "read"),
+  getResourceAuditHistory
+);
+router.get(
+  "/audit-logs/:id",
+  defaultPolicyMiddleware.requirePermission("audit", "read"),
+  getAuditLog
+);
 
 export default router;

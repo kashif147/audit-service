@@ -12,7 +12,7 @@
     "db:migrate": "node src/db/migrate.js"
   },
   "dependencies": {
-    "@membership/policy-middleware": "git+https://github.com/kashif147/policy-middleware.git#gateway",
+    "@membership/policy-middleware": "github:kashif147/policy-middleware#gateway",
     "@projectShell/rabbitmq-middleware": "github:kashif147/rabbitmq-middleware#gateway",
     "compression": "^1.7.4",
     "cors": "^2.8.5",

@@ -12,6 +12,7 @@ import { handleMembershipEvent }   from "./listeners/membership.listener.js";
 import { handleProductEvent }      from "./listeners/product.listener.js";
 import { handleBatchEvent }        from "./listeners/batch.listener.js";
 import { handleJournalEvent }      from "./listeners/journal.listener.js";
+import { handleProfileEvent }      from "./listeners/profile.listener.js";
 
 // ── Queues ────────────────────────────────────────────────────────────────────
 const QUEUES = {
@@ -21,6 +22,7 @@ const QUEUES = {
   product:     "audit.product.events",
   batch:       "audit.batch.events",
   journal:     "audit.journal.events",
+  profile:     "audit.profile.events",
 };
 
 export async function initEventSystem() {
@@ -91,10 +93,16 @@ export async function setupConsumers() {
   await setupQueue(
     QUEUES.membership,
     "membership.events",
-    ["members.subscription.current.updated.v1",
-     "members.subscription.resigned.v1",
-     "members.subscription.resignation.undone.v1",
-     "members.subscription.cancel.grace.ended.v1"],
+    [
+      "members.subscription.current.updated.v1",
+      "members.subscription.changed.v1",
+      "members.subscription.category.changed.v1",
+      "members.subscription.resigned.v1",
+      "members.subscription.resignation.undone.v1",
+      "members.subscription.cancelled.v1",
+      "members.subscription.cancellation.undone.v1",
+      "members.subscription.cancel.grace.ended.v1",
+    ],
     handleMembershipEvent
   );
 
@@ -122,6 +130,14 @@ export async function setupConsumers() {
     "journal.events",
     ["journal.created.v1"],
     handleJournalEvent
+  );
+
+  // ── profile.events (published by profile-service) ───────────────────────────
+  await setupQueue(
+    QUEUES.profile,
+    "profile.events",
+    ["profile.created", "profile.updated", "profile.deleted"],
+    handleProfileEvent
   );
 
   logger.info("All audit consumers ready");

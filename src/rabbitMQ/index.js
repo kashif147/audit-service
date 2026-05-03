@@ -5,6 +5,8 @@ import {
   shutdown,
 } from "@projectShell/rabbitmq-middleware";
 import logger from "../config/logger.js";
+import bizLogger from "../config/bizLogger.js";
+import { createRabbitStructuredLogHandlers } from "@projectShell/logging-lib";
 
 import { handleUserEvent }         from "./listeners/user.listener.js";
 import { handleApplicationEvent }  from "./listeners/application.listener.js";
@@ -29,6 +31,7 @@ export async function initEventSystem() {
   await init({
     url:            process.env.RABBIT_URL,
     logger,
+    structuredLog: createRabbitStructuredLogHandlers(bizLogger),
     prefetch:       10,
     connectionName: "audit-service",
     serviceName:    "audit-service",

@@ -3,6 +3,12 @@ import helmet from "helmet";
 import compression from "compression";
 import pinoHttp from "pino-http";
 import logger from "./config/logger.js";
+import bizLogger from "./config/bizLogger.js";
+import {
+  correlationIdMiddleware,
+  logErrorMiddleware,
+  createSystemLogsRouter,
+} from "@projectShell/logging-lib";
 import responseMiddleware from "./middlewares/response.mw.js";
 import errorHandler from "./middlewares/errorHandler.js";
 import notFound from "./middlewares/notFound.js";
@@ -21,6 +27,8 @@ const app = express();
 app.use(helmet());
 app.use(compression());
 app.use(express.json({ limit: "512kb" }));
+app.use(correlationIdMiddleware);
+app.use("/api", createSystemLogsRouter(bizLogger));
 app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === "/health" } }));
 app.use(responseMiddleware);
 
@@ -35,6 +43,7 @@ app.get("/ready",  (req, res) => res.success({ ok: true }));
 app.use("/api", ensureAuthenticated, routes);
 
 app.use(notFound);
+app.use(logErrorMiddleware(bizLogger));
 app.use(errorHandler);
 
 // ── RabbitMQ ──────────────────────────────────────────────────────────────────

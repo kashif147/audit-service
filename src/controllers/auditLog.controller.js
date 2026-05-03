@@ -11,7 +11,7 @@ export async function listAuditLogs(req, res, next) {
     const tenantId = req.headers["x-tenant-id"] || req.query.tenantId;
     if (!tenantId) return res.fail("x-tenant-id header is required", 400);
 
-    const limit  = Math.min(parseInt(req.query.limit  || "50"),  200);
+    const limit  = Math.min(parseInt(req.query.limit  || "500"),  1000);
     const offset = Math.max(parseInt(req.query.offset || "0"),   0);
 
     const result = await findAuditLogs({

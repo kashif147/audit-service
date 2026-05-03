@@ -8,6 +8,7 @@ import errorHandler from "./middlewares/errorHandler.js";
 import notFound from "./middlewares/notFound.js";
 import { ensureAuthenticated } from "./middlewares/auth.js";
 import routes from "./routes/index.js";
+import internalAuditRoutes from "./routes/internalAudit.routes.js";
 import {
   initEventSystem,
   setupConsumers,
@@ -22,6 +23,9 @@ app.use(compression());
 app.use(express.json({ limit: "512kb" }));
 app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === "/health" } }));
 app.use(responseMiddleware);
+
+// ── Internal (service key) — no JWT ──────────────────────────────────────────
+app.use("/internal", internalAuditRoutes);
 
 // ── Health ────────────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => res.status(200).json({ status: "UP" }));

@@ -76,7 +76,7 @@ export async function findAuditLogs({
   eventType,
   from,
   to,
-  limit  = 50,
+  limit  = 500,
   offset = 0,
 }) {
   const conditions = ["tenant_id = $1"];

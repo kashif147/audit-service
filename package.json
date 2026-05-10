@@ -9,7 +9,8 @@
     "start:dev": "cross-env NODE_ENV=development node bin/audit-service.js",
     "start:staging": "cross-env NODE_ENV=staging node bin/audit-service.js",
     "start:prod": "cross-env NODE_ENV=production node bin/audit-service.js",
-    "db:migrate": "node src/db/migrate.js"
+    "db:migrate": "node src/db/migrate.js",
+    "db:migrate:staging": "cross-env NODE_ENV=staging node src/db/migrate.js"
   },
   "dependencies": {
     "@projectShell/logging-lib": "git+https://github.com/kashif147/logging-lib.git#main",

@@ -2,7 +2,7 @@
  * Run once to create the audit_logs table and its indexes.
  * Usage: npm run db:migrate
  */
-import "dotenv-flow/config.js";
+import "dotenv-flow/config";
 import { connectDB, query, closeDB } from "../config/db.js";
 
 const CREATE_TABLE = `

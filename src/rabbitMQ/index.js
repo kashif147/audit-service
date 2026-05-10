@@ -1,9 +1,4 @@
-import {
-  init,
-  consumer,
-  connectionManager,
-  shutdown,
-} from "@projectShell/rabbitmq-middleware";
+import { init, consumer, shutdown } from "@projectShell/rabbitmq-middleware";
 import logger from "../config/logger.js";
 import bizLogger from "../config/bizLogger.js";
 import { createRabbitStructuredLogHandlers } from "@projectShell/logging-lib";
@@ -35,21 +30,15 @@ export async function initEventSystem() {
     prefetch:       10,
     connectionName: "audit-service",
     serviceName:    "audit-service",
+    // Not in middleware default list; needed before account-service asserts it.
+    exchanges: [
+      { name: "batch.events", type: "topic", options: { durable: true } },
+    ],
   });
   logger.info("RabbitMQ initialised for audit-service");
 }
 
 export async function setupConsumers() {
-  // ── Helper ──────────────────────────────────────────────────────────────────
-  async function assertExchange(name, type = "topic") {
-    try {
-      const ch = await connectionManager.getNamedChannel("consumer", 10);
-      await ch.assertExchange(name, type, { durable: true });
-    } catch (err) {
-      logger.warn({ exchange: name, error: err.message }, "Could not assert exchange");
-    }
-  }
-
   /**
    * One durable queue may bind to multiple exchanges (topic routing keys must be unique per queue).
    * @param {string} queueName
@@ -65,7 +54,6 @@ export async function setupConsumers() {
       const routingKeyExchange = new Map();
 
       for (const { exchange, routingKeys } of bindings) {
-        await assertExchange(exchange);
         await consumer.bindQueue(queueName, exchange, routingKeys);
         for (const rk of routingKeys) {
           if (!routingKeyExchange.has(rk)) routingKeyExchange.set(rk, exchange);

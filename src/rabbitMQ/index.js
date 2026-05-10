@@ -50,16 +50,34 @@ export async function setupConsumers() {
     }
   }
 
-  async function setupQueue(queueName, exchange, routingKeys, handler) {
+  /**
+   * One durable queue may bind to multiple exchanges (topic routing keys must be unique per queue).
+   * @param {string} queueName
+   * @param {{ exchange: string, routingKeys: string[] }[]} bindings
+   * @param {(payload: object, eventType: string, exchange: string) => Promise<void>} handler
+   */
+  async function setupQueue(queueName, bindings, handler) {
     try {
-      await consumer.createQueue(queueName, { durable: true, messageTtl: 3_600_000 });
-      await assertExchange(exchange);
-      await consumer.bindQueue(queueName, exchange, routingKeys);
+      if (!bindings?.length) throw new Error("bindings required");
 
-      for (const key of routingKeys) {
+      await consumer.createQueue(queueName, { durable: true, messageTtl: 3_600_000 });
+
+      const routingKeyExchange = new Map();
+
+      for (const { exchange, routingKeys } of bindings) {
+        await assertExchange(exchange);
+        await consumer.bindQueue(queueName, exchange, routingKeys);
+        for (const rk of routingKeys) {
+          if (!routingKeyExchange.has(rk)) routingKeyExchange.set(rk, exchange);
+        }
+      }
+
+      const allKeys = [...routingKeyExchange.keys()];
+      for (const key of allKeys) {
+        const boundExchange = routingKeyExchange.get(key);
         consumer.registerHandler(key, async (payload) => {
           try {
-            await handler(payload, key, exchange);
+            await handler(payload, key, boundExchange);
           } catch (err) {
             logger.error({ eventType: key, error: err.message }, "Audit handler error");
           }
@@ -67,81 +85,95 @@ export async function setupConsumers() {
       }
 
       await consumer.consume(queueName, { prefetch: 10 });
-      logger.info({ queue: queueName, exchange, routingKeys }, "Consumer ready");
+      logger.info({ queue: queueName, bindings }, "Consumer ready");
     } catch (err) {
       logger.error({ queue: queueName, error: err.message }, "Failed to set up consumer");
     }
   }
 
   // ── user.events ─────────────────────────────────────────────────────────────
-  await setupQueue(
-    QUEUES.user,
-    "user.events",
-    ["user.crm.created.v1", "user.crm.updated.v1",
-     "user.portal.created.v1", "user.portal.updated.v1"],
-    handleUserEvent
-  );
+  await setupQueue(QUEUES.user, [
+    {
+      exchange: "user.events",
+      routingKeys: [
+        "user.crm.created.v1",
+        "user.crm.updated.v1",
+        "user.portal.created.v1",
+        "user.portal.updated.v1",
+      ],
+    },
+  ], handleUserEvent);
 
-  // ── application.events ──────────────────────────────────────────────────────
-  await setupQueue(
-    QUEUES.application,
-    "application.events",
-    ["applications.review.approved.v1",
-     "applications.review.rejected.v1",
-     "application.status.submitted.v1"],
-    handleApplicationEvent
-  );
+  // application.events: approvals/rejections (+ optional .v1 submission if introduced).
+  // accounts.events: account-service publishes application.status.submitted here (middleware mapping).
+  await setupQueue(QUEUES.application, [
+    {
+      exchange: "application.events",
+      routingKeys: [
+        "applications.review.approved.v1",
+        "applications.review.rejected.v1",
+        "application.status.submitted.v1",
+      ],
+    },
+    {
+      exchange: "accounts.events",
+      routingKeys: ["application.status.submitted"],
+    },
+  ], handleApplicationEvent);
 
   // ── membership.events ───────────────────────────────────────────────────────
-  await setupQueue(
-    QUEUES.membership,
-    "membership.events",
-    [
-      "members.subscription.current.updated.v1",
-      "members.subscription.changed.v1",
-      "members.subscription.category.changed.v1",
-      "members.subscription.resigned.v1",
-      "members.subscription.resignation.undone.v1",
-      "members.subscription.cancelled.v1",
-      "members.subscription.cancellation.undone.v1",
-      "members.subscription.cancel.grace.ended.v1",
-    ],
-    handleMembershipEvent
-  );
+  await setupQueue(QUEUES.membership, [
+    {
+      exchange: "membership.events",
+      routingKeys: [
+        "members.subscription.current.updated.v1",
+        "members.subscription.changed.v1",
+        "members.subscription.category.changed.v1",
+        "members.subscription.resigned.v1",
+        "members.subscription.resignation.undone.v1",
+        "members.subscription.cancelled.v1",
+        "members.subscription.cancellation.undone.v1",
+        "members.subscription.cancel.grace.ended.v1",
+      ],
+    },
+  ], handleMembershipEvent);
 
   // ── product.events ──────────────────────────────────────────────────────────
-  await setupQueue(
-    QUEUES.product,
-    "product.events",
-    ["product.type.created.v1", "product.type.updated.v1", "product.type.deleted.v1",
-     "product.created.v1",      "product.updated.v1",      "product.deleted.v1",
-     "pricing.created.v1",      "pricing.updated.v1",      "pricing.deleted.v1"],
-    handleProductEvent
-  );
+  await setupQueue(QUEUES.product, [
+    {
+      exchange: "product.events",
+      routingKeys: [
+        "product.type.created.v1",
+        "product.type.updated.v1",
+        "product.type.deleted.v1",
+        "product.created.v1",
+        "product.updated.v1",
+        "product.deleted.v1",
+        "pricing.created.v1",
+        "pricing.updated.v1",
+        "pricing.deleted.v1",
+      ],
+    },
+  ], handleProductEvent);
 
   // ── batch.events ─────────────────────────────────────────────────────────────
-  await setupQueue(
-    QUEUES.batch,
-    "batch.events",
-    ["batch.completed"],
-    handleBatchEvent
-  );
+  await setupQueue(QUEUES.batch, [
+    { exchange: "batch.events", routingKeys: ["batch.completed"] },
+  ], handleBatchEvent);
 
-  // ── journal.events (published by account-service) ───────────────────────────
-  await setupQueue(
-    QUEUES.journal,
-    "journal.events",
-    ["journal.created.v1"],
-    handleJournalEvent
-  );
+  // journal.created.v1: middleware defaults unknown keys to application.events; also bind journal.events if mapped later.
+  await setupQueue(QUEUES.journal, [
+    { exchange: "application.events", routingKeys: ["journal.created.v1"] },
+    { exchange: "journal.events", routingKeys: ["journal.created.v1"] },
+  ], handleJournalEvent);
 
   // ── profile.events (published by profile-service) ───────────────────────────
-  await setupQueue(
-    QUEUES.profile,
-    "profile.events",
-    ["profile.created", "profile.updated", "profile.deleted"],
-    handleProfileEvent
-  );
+  await setupQueue(QUEUES.profile, [
+    {
+      exchange: "profile.events",
+      routingKeys: ["profile.created", "profile.updated", "profile.deleted"],
+    },
+  ], handleProfileEvent);
 
   logger.info("All audit consumers ready");
 }

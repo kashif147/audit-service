@@ -5,6 +5,7 @@ const ACTION_MAP = {
   "applications.review.approved.v1": "APPLICATION_APPROVED",
   "applications.review.rejected.v1": "APPLICATION_REJECTED",
   "application.status.submitted.v1": "APPLICATION_SUBMITTED",
+  "application.status.submitted": "APPLICATION_SUBMITTED",
 };
 
 export async function handleApplicationEvent(payload, eventType, exchange) {
@@ -14,7 +15,7 @@ export async function handleApplicationEvent(payload, eventType, exchange) {
     tenantId:      data.tenantId || payload.tenantId || "unknown",
     eventType,
     exchange,
-    service:       payload.metadata?.service || "profile-service",
+    service:       payload.metadata?.service || "unknown-service",
     action:        ACTION_MAP[eventType] || "UNKNOWN",
     resourceType:  "application",
     resourceId:    data.applicationId,

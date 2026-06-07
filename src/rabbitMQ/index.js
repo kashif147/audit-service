@@ -101,6 +101,8 @@ export async function setupConsumers() {
         "applications.review.approved.v1",
         "applications.review.rejected.v1",
         "application.status.submitted.v1",
+        "applications.duplicate.review.decided.v1",
+        "applications.duplicate.detection.run.v1",
       ],
     },
     {

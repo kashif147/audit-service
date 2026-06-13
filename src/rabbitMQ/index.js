@@ -161,7 +161,13 @@ export async function setupConsumers() {
   await setupQueue(QUEUES.profile, [
     {
       exchange: "profile.events",
-      routingKeys: ["profile.created", "profile.updated", "profile.deleted"],
+      routingKeys: [
+        "profile.created",
+        "profile.updated",
+        "profile.deleted",
+        "profile.duplicate.detection.run",
+        "profile.duplicate.merged",
+      ],
     },
   ], handleProfileEvent);
 

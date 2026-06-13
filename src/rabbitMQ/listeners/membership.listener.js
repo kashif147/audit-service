@@ -12,8 +12,40 @@ const ACTION_MAP = {
   "members.subscription.cancel.grace.ended.v1": "SUBSCRIPTION_CANCEL_GRACE_ENDED",
 };
 
+function resolveMembershipAction(eventType, data, metadata = {}) {
+  if (eventType === "members.subscription.cancelled.v1") {
+    if (metadata.job === "undergraduateGraduationCancellation") {
+      return "UNDERGRADUATE_GRADUATION_CANCELLED";
+    }
+    if (metadata.source === "reminderBatch") {
+      return "REMINDER_BATCH_CANCELLATION";
+    }
+    return ACTION_MAP[eventType];
+  }
+
+  if (eventType === "members.subscription.changed.v1") {
+    const fields = Array.isArray(data.changedFields) ? data.changedFields : [];
+    if (fields.some((f) => String(f).includes("reminder"))) {
+      return "REMINDER_DATES_CHANGED";
+    }
+    if (fields.some((f) => String(f).includes("cancellation"))) {
+      return "CANCELLATION_DATES_CHANGED";
+    }
+    if (metadata.job === "undergraduateGraduationCancellation") {
+      return "UNDERGRADUATE_GRADUATION_CANCELLED";
+    }
+    return ACTION_MAP[eventType];
+  }
+
+  return ACTION_MAP[eventType] || "SUBSCRIPTION_MEMBERSHIP_EVENT";
+}
+
 export async function handleMembershipEvent(payload, eventType, exchange) {
   const data = payload.data || payload;
+  const metadata =
+    payload.metadata && typeof payload.metadata === "object"
+      ? payload.metadata
+      : {};
 
   const hasExplicitAfter = data.after != null;
   const afterState = hasExplicitAfter ? data.after : data;
@@ -23,8 +55,8 @@ export async function handleMembershipEvent(payload, eventType, exchange) {
     tenantId: data.tenantId || payload.tenantId || "unknown",
     eventType,
     exchange,
-    service: payload.metadata?.service || "subscription-service",
-    action: ACTION_MAP[eventType] || "SUBSCRIPTION_MEMBERSHIP_EVENT",
+    service: metadata.service || "subscription-service",
+    action: resolveMembershipAction(eventType, data, metadata),
     resourceType: "subscription",
     resourceId:
       data.subscriptionId != null
@@ -44,7 +76,10 @@ export async function handleMembershipEvent(payload, eventType, exchange) {
     eventId: payload.eventId,
     before: beforeState,
     after: afterState,
-    metadata: payload.metadata,
+    metadata: {
+      ...metadata,
+      changedFields: data.changedFields || null,
+    },
     occurredAt: new Date(payload.timestamp || Date.now()),
   });
 

@@ -1,5 +1,15 @@
-import { findAuditLogs, getResourceHistory } from "../models/auditLog.model.js";
+import { findAuditLogs, getResourceHistory, findMemberAuditLogs } from "../models/auditLog.model.js";
+import { expandAuditRowsToChanges } from "../helpers/auditDiff.js";
 import { query } from "../config/db.js";
+
+function parseIdList(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  return String(raw)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 /**
  * GET /api/audit-logs
@@ -42,6 +52,50 @@ export async function getAuditLog(req, res, next) {
     const { rows } = await query("SELECT * FROM audit_logs WHERE id = $1", [req.params.id]);
     if (!rows.length) return res.fail("Audit log not found", 404);
     res.success(rows[0]);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/audit-logs/member/:profileId
+ * Query: subscriptionIds, applicationIds (comma-separated), resourceType, limit, offset, diffOnly (default true)
+ */
+export async function getMemberAuditHistory(req, res, next) {
+  try {
+    const tenantId = req.headers["x-tenant-id"] || req.query.tenantId;
+    if (!tenantId) return res.fail("x-tenant-id header is required", 400);
+
+    const { profileId } = req.params;
+    if (!profileId) return res.fail("profileId is required", 400);
+
+    const limit = Math.min(parseInt(req.query.limit || "500", 10), 1000);
+    const offset = Math.max(parseInt(req.query.offset || "0", 10), 0);
+    const diffOnly = req.query.diffOnly !== "false";
+
+    const result = await findMemberAuditLogs({
+      tenantId,
+      profileId: String(profileId),
+      subscriptionIds: parseIdList(req.query.subscriptionIds),
+      applicationIds: parseIdList(req.query.applicationIds),
+      resourceType: req.query.resourceType || null,
+      limit,
+      offset,
+    });
+
+    if (diffOnly) {
+      const changes = expandAuditRowsToChanges(result.items);
+      return res.success({
+        profileId: String(profileId),
+        total: result.total,
+        changeCount: changes.length,
+        items: changes,
+        limit,
+        offset,
+      });
+    }
+
+    res.success({ ...result, profileId: String(profileId), limit, offset });
   } catch (err) {
     next(err);
   }

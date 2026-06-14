@@ -122,3 +122,74 @@ export async function getResourceHistory(tenantId, resourceType, resourceId) {
   );
   return rows;
 }
+
+/**
+ * Member-centric audit history: profile + related subscription/application resources.
+ * @param {object} params
+ * @param {string} params.tenantId
+ * @param {string} params.profileId
+ * @param {string[]} [params.subscriptionIds]
+ * @param {string[]} [params.applicationIds]
+ * @param {string} [params.resourceType] - optional filter (profile | subscription | application)
+ * @param {number} [params.limit]
+ * @param {number} [params.offset]
+ */
+export async function findMemberAuditLogs({
+  tenantId,
+  profileId,
+  subscriptionIds = [],
+  applicationIds = [],
+  resourceType = null,
+  limit = 500,
+  offset = 0,
+}) {
+  const clauses = [];
+  const params = [tenantId];
+  let idx = 2;
+
+  const profileClause = `(resource_type = 'profile' AND resource_id = $${idx++})`;
+  params.push(String(profileId));
+
+  const subIds = (subscriptionIds || []).map(String).filter(Boolean);
+  const appIds = (applicationIds || []).map(String).filter(Boolean);
+
+  const orParts = [profileClause];
+
+  if (subIds.length) {
+    orParts.push(
+      `(resource_type = 'subscription' AND resource_id = ANY($${idx++}::text[]))`,
+    );
+    params.push(subIds);
+  }
+  if (appIds.length) {
+    orParts.push(
+      `(resource_type = 'application' AND resource_id = ANY($${idx++}::text[]))`,
+    );
+    params.push(appIds);
+  }
+
+  clauses.push(`tenant_id = $1`);
+  clauses.push(`(${orParts.join(" OR ")})`);
+
+  if (resourceType) {
+    clauses.push(`resource_type = $${idx++}`);
+    params.push(resourceType);
+  }
+
+  const where = clauses.join(" AND ");
+
+  const [dataRes, countRes] = await Promise.all([
+    query(
+      `SELECT * FROM audit_logs WHERE ${where}
+       ORDER BY occurred_at DESC
+       LIMIT $${idx++} OFFSET $${idx}`,
+      [...params, limit, offset],
+    ),
+    query(`SELECT COUNT(*) FROM audit_logs WHERE ${where}`, params),
+  ]);
+
+  return {
+    total: parseInt(countRes.rows[0].count, 10),
+    items: dataRes.rows,
+  };
+}

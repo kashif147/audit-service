@@ -3,6 +3,7 @@ import {
   listAuditLogs,
   getAuditLog,
   getResourceAuditHistory,
+  getMemberAuditHistory,
   getAuditSummary,
 } from "../controllers/auditLog.controller.js";
 import { defaultPolicyMiddleware } from "../middlewares/policy.middleware.js";
@@ -18,6 +19,11 @@ router.get(
   "/audit-logs/summary",
   defaultPolicyMiddleware.requirePermission("audit", "read"),
   getAuditSummary
+);
+router.get(
+  "/audit-logs/member/:profileId",
+  defaultPolicyMiddleware.requirePermission("audit", "read"),
+  getMemberAuditHistory
 );
 router.get(
   "/audit-logs/resource/:resourceType/:resourceId",

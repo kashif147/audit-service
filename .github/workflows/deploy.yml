@@ -49,4 +49,16 @@ jobs:
             cd /home/deploy/membership-platform/audit-service
             docker compose build audit-service
             docker compose up -d audit-service
+            echo "Waiting for audit-service health..."
+            for i in $(seq 1 30); do
+              if docker exec audit-service curl -sf http://localhost:4006/health >/dev/null 2>&1; then
+                echo "audit-service is healthy"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "audit-service failed to become healthy:"
+            docker ps -a --filter name=audit-service
+            docker logs audit-service --tail 80
+            exit 1
           EOF

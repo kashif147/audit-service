@@ -93,10 +93,14 @@ export function diffAuditStates(before, after, opts = {}) {
     const oldValue = beforeFlat[path];
     const newValue = afterFlat[path];
     if (!valuesEqual(oldValue, newValue)) {
+      const formattedOld = formatAuditValue(oldValue);
+      const formattedNew = formatAuditValue(newValue);
+      // Skip rows that display the same (e.g. null vs "" both render as "—").
+      if (formattedOld === formattedNew) continue;
       changes.push({
         field: path,
-        oldValue: formatAuditValue(oldValue),
-        newValue: formatAuditValue(newValue),
+        oldValue: formattedOld,
+        newValue: formattedNew,
       });
     }
   }

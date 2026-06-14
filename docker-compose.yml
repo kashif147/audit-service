@@ -1,6 +1,6 @@
-# Postgres: this container must share gateway_app-net with reporting-postgres (reporting-service compose).
-# POSTGRES_URI host MUST be reporting-postgres:5432 (see .env.staging), not localhost.
-# Start reporting-postgres before audit-service:
+# Shares reporting-postgres from reporting-service compose (same gateway_app-net).
+# Host must be reporting-postgres:5432 — see .env.staging (same credentials as reporting_db).
+# Start Postgres first:
 #   cd /home/deploy/membership-platform/reporting-service && docker compose up -d reporting-postgres
 services:
   audit-service:
@@ -11,21 +11,23 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    env_file:
-      - ${ENV_COMMON_PATH:-../../config/.env.common}
-      - .env.staging
-
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4006/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 90s
     ports:
       - "4006:4006"
     volumes:
       - ../../logs:/var/log/projectshell
     restart: always
+    env_file:
+      - ${ENV_COMMON_PATH:-../../config/.env.common}
+      - .env.staging
+    environment:
+      RUN_AUDIT_MIGRATIONS: "true"
+      GATEWAY_HANDLES_CORS: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - gateway_app-net
 

@@ -5,7 +5,7 @@
   "main": "bin/audit-service.js",
   "scripts": {
     "dev": "nodemon --watch src --watch bin --ext js,json --exec node bin/audit-service.js",
-    "start": "node src/db/migrate.js && node bin/audit-service.js",
+    "start": "node bin/audit-service.js",
     "start:dev": "cross-env NODE_ENV=development node bin/audit-service.js",
     "start:staging": "cross-env NODE_ENV=staging node bin/audit-service.js",
     "start:prod": "cross-env NODE_ENV=production node bin/audit-service.js",

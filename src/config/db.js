@@ -103,11 +103,32 @@ async function ensureDatabaseExists(connectionString) {
   }
 }
 
+function resolveConnectionString() {
+  if (process.env.POSTGRES_URI) return process.env.POSTGRES_URI;
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+
+  const user = process.env.POSTGRES_USER;
+  const password = process.env.POSTGRES_PASSWORD;
+  const host = process.env.POSTGRES_HOST || "reporting-postgres";
+  const port = process.env.POSTGRES_PORT || "5432";
+  const database = process.env.POSTGRES_DB || "audit_db";
+
+  if (user && password) {
+    return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${database}`;
+  }
+
+  return null;
+}
+
 export async function connectDB() {
-  const connectionString = process.env.POSTGRES_URI || process.env.DATABASE_URL;
+  if (pool) return;
+
+  const connectionString = resolveConnectionString();
 
   if (!connectionString) {
-    throw new Error("POSTGRES_URI is not set");
+    throw new Error(
+      "POSTGRES_URI is not set (or POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB)",
+    );
   }
 
   const maxRetries = parseInt(process.env.DB_RETRIES || "10");

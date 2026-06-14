@@ -3,6 +3,7 @@
  * Usage: npm run db:migrate
  */
 import "dotenv-flow/config";
+import { fileURLToPath } from "url";
 import { connectDB, query, closeDB } from "../config/db.js";
 
 const CREATE_TABLE = `
@@ -73,9 +74,9 @@ const INDEXES = [
      ON audit_logs USING GIN (metadata)`,
 ];
 
-async function migrate() {
+export async function runMigrations() {
   await connectDB();
-  console.log("Running migration...");
+  console.log("Running audit migration...");
 
   await query(CREATE_TABLE);
   console.log("✓ Table audit_logs created");
@@ -84,12 +85,20 @@ async function migrate() {
     await query(idx);
   }
   console.log("✓ Indexes created");
-
-  await closeDB();
-  console.log("Migration complete");
 }
 
-migrate().catch((err) => {
-  console.error("Migration failed:", err.message);
-  process.exit(1);
-});
+const isCli = process.argv[1] === fileURLToPath(import.meta.url);
+
+if (isCli) {
+  runMigrations()
+    .then(async () => {
+      await closeDB();
+      console.log("Migration complete");
+      process.exit(0);
+    })
+    .catch(async (err) => {
+      console.error("Migration failed:", err.message);
+      await closeDB().catch(() => {});
+      process.exit(1);
+    });
+}

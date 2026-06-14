@@ -1,6 +1,7 @@
-# Postgres: this container must share gateway_app-net with your Postgres service (e.g. reporting-postgres).
-# POSTGRES_URI host MUST be that container/service DNS name (e.g. reporting-postgres:5432), not localhost.
-# Start Postgres before audit-service (or rely on audit-service DB retry loop until Postgres is up).
+# Postgres: this container must share gateway_app-net with reporting-postgres (reporting-service compose).
+# POSTGRES_URI host MUST be reporting-postgres:5432 (see .env.staging), not localhost.
+# Start reporting-postgres before audit-service:
+#   cd /home/deploy/membership-platform/reporting-service && docker compose up -d reporting-postgres
 services:
   audit-service:
     container_name: audit-service
@@ -18,8 +19,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:4006/health"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 30s
+      retries: 10
+      start_period: 90s
     ports:
       - "4006:4006"
     volumes:

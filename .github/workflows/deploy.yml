@@ -46,11 +46,22 @@ jobs:
       - name: Build and restart audit-service
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} << 'EOF'
+            set -euo pipefail
+            export ENV_COMMON_PATH=/home/deploy/config/.env.common
+
+            cd /home/deploy/membership-platform/reporting-service
+            docker compose up -d reporting-postgres
+
             cd /home/deploy/membership-platform/audit-service
+            if [ ! -f .env.staging ]; then
+              echo "Missing audit-service .env.staging (needs POSTGRES_URI for reporting-postgres:5432/audit_db)"
+              exit 1
+            fi
+
             docker compose build audit-service
             docker compose up -d audit-service
             echo "Waiting for audit-service health..."
-            for i in $(seq 1 30); do
+            for i in $(seq 1 45); do
               if docker exec audit-service curl -sf http://localhost:4006/health >/dev/null 2>&1; then
                 echo "audit-service is healthy"
                 exit 0

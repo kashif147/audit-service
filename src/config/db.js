@@ -113,12 +113,10 @@ export async function connectDB() {
   const maxRetries = parseInt(process.env.DB_RETRIES || "10");
   const delay = parseInt(process.env.DB_RETRY_DELAY || "5000");
 
-  // Step 1: Ensure DB exists (safe to call every time)
-  await ensureDatabaseExists(connectionString);
-
-  // Step 2: Retry connection
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
+      await ensureDatabaseExists(connectionString);
+
       pool = new Pool({
         connectionString,
         max: parseInt(process.env.PG_MAX_POOL || "10"),
@@ -145,6 +143,11 @@ export async function connectDB() {
         { err, attempt },
         `DB connection failed (attempt ${attempt})`,
       );
+
+      if (pool) {
+        await pool.end().catch(() => {});
+        pool = undefined;
+      }
 
       if (attempt === maxRetries) {
         throw err;

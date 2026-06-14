@@ -40,7 +40,21 @@ function resolveMembershipAction(eventType, data, metadata = {}) {
   return ACTION_MAP[eventType] || "SUBSCRIPTION_MEMBERSHIP_EVENT";
 }
 
+/** Not stored as audit rows — field history comes from members.subscription.changed.v1 snapshots. */
+const SKIP_MEMBERSHIP_AUDIT_EVENT_TYPES = new Set([
+  "members.subscription.category.changed.v1",
+  "members.subscription.current.updated.v1",
+]);
+
 export async function handleMembershipEvent(payload, eventType, exchange) {
+  if (SKIP_MEMBERSHIP_AUDIT_EVENT_TYPES.has(eventType)) {
+    logger.debug(
+      { eventType },
+      "Skipping redundant membership audit event",
+    );
+    return;
+  }
+
   const data = payload.data || payload;
   const metadata =
     payload.metadata && typeof payload.metadata === "object"

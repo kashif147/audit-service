@@ -105,7 +105,80 @@ export function diffAuditStates(before, after, opts = {}) {
     }
   }
 
-  return changes;
+  return dedupeFieldChanges(changes);
+}
+
+/** Collapse alias paths that represent the same CRM attribute (e.g. nested membershipCategory). */
+function canonicalAuditField(field) {
+  if (field == null || field === "") return "";
+  const path = String(field);
+  if (path === "previousMembershipCategory") return "membershipCategory";
+  if (path === "membershipCategory" || path.endsWith(".membershipCategory")) {
+    return "membershipCategory";
+  }
+  return path;
+}
+
+function changeQualityScore(change) {
+  let score = 0;
+  if (change.oldValue && change.oldValue !== "—") score += 100;
+  const field = String(change.field || "");
+  if (!field.includes("effective.")) score += 20;
+  score += Math.max(0, 10 - field.split(".").length);
+  return score;
+}
+
+function dedupeFieldChanges(changes) {
+  const bestByCanonical = new Map();
+
+  for (const change of changes) {
+    const canon = canonicalAuditField(change.field);
+    const normalized = {
+      ...change,
+      field: canon || change.field,
+    };
+    const prev = bestByCanonical.get(normalized.field);
+    if (!prev || changeQualityScore(normalized) > changeQualityScore(prev)) {
+      bestByCanonical.set(normalized.field, normalized);
+    }
+  }
+
+  return [...bestByCanonical.values()];
+}
+
+function expandedItemQualityScore(item) {
+  let score = 0;
+  if (item.oldValue && item.oldValue !== "—") score += 100;
+  if (item.action === "SUBSCRIPTION_FIELDS_UPDATED") score += 30;
+  if (item.action === "MEMBERSHIP_CATEGORY_CHANGED") score += 10;
+  if (item.action === "SUBSCRIPTION_UPDATED") score += 5;
+  const field = String(item.field || "");
+  if (!field.includes("effective.")) score += 20;
+  return score;
+}
+
+function dedupeExpandedItems(items) {
+  const DEDUPE_MS = 60_000;
+  const eventOnly = [];
+  const bestByKey = new Map();
+
+  for (const item of items) {
+    const canon = canonicalAuditField(item.field);
+    if (!canon) {
+      eventOnly.push(item);
+      continue;
+    }
+
+    const t = new Date(item.occurredAt).getTime();
+    const bucket = Number.isFinite(t) ? Math.floor(t / DEDUPE_MS) : 0;
+    const key = `${item.resourceType}|${item.resourceId}|${canon}|${item.newValue}|${bucket}`;
+    const prev = bestByKey.get(key);
+    if (!prev || expandedItemQualityScore(item) > expandedItemQualityScore(prev)) {
+      bestByKey.set(key, { ...item, field: canon });
+    }
+  }
+
+  return [...eventOnly, ...bestByKey.values()];
 }
 
 const ACTION_LABELS = {
@@ -204,9 +277,11 @@ export function expandAuditRowsToChanges(rows) {
     }
   }
 
-  items.sort(
+  const deduped = dedupeExpandedItems(items);
+
+  deduped.sort(
     (a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime(),
   );
 
-  return items;
+  return deduped;
 }

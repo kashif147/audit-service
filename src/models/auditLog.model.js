@@ -40,6 +40,47 @@ export async function createAuditLog(log) {
     occurredAt   = new Date(),
   } = log;
 
+  if (eventId) {
+    const { rows: byEvent } = await query(
+      `SELECT * FROM audit_logs WHERE tenant_id = $1 AND event_id = $2 LIMIT 1`,
+      [tenantId, eventId],
+    );
+    if (byEvent.length) return byEvent[0];
+  }
+
+  const dedupeKey =
+    metadata && typeof metadata === "object" ? metadata.dedupeKey : null;
+  if (dedupeKey) {
+    const { rows: byKey } = await query(
+      `SELECT * FROM audit_logs
+       WHERE tenant_id = $1 AND metadata->>'dedupeKey' = $2
+       LIMIT 1`,
+      [tenantId, String(dedupeKey)],
+    );
+    if (byKey.length) return byKey[0];
+  }
+
+  const journalDocNo =
+    after && typeof after === "object" && after.docNo
+      ? String(after.docNo)
+      : null;
+  if (
+    resourceType === "finance" &&
+    journalDocNo &&
+    eventType === "journal.created.v1"
+  ) {
+    const { rows: byJournal } = await query(
+      `SELECT * FROM audit_logs
+       WHERE tenant_id = $1
+         AND resource_type = 'finance'
+         AND event_type = 'journal.created.v1'
+         AND after_state->>'docNo' = $2
+       LIMIT 1`,
+      [tenantId, journalDocNo],
+    );
+    if (byJournal.length) return byJournal[0];
+  }
+
   const { rows } = await query(
     `INSERT INTO audit_logs
        (tenant_id, event_type, exchange, service, action,
@@ -117,7 +158,7 @@ export async function getResourceHistory(tenantId, resourceType, resourceId) {
   const { rows } = await query(
     `SELECT * FROM audit_logs
      WHERE tenant_id = $1 AND resource_type = $2 AND resource_id = $3
-     ORDER BY occurred_at ASC`,
+     ORDER BY occurred_at DESC`,
     [tenantId, resourceType, resourceId]
   );
   return rows;
@@ -130,13 +171,15 @@ export async function getResourceHistory(tenantId, resourceType, resourceId) {
  * @param {string} params.profileId
  * @param {string[]} [params.subscriptionIds]
  * @param {string[]} [params.applicationIds]
- * @param {string} [params.resourceType] - optional filter (profile | subscription | application)
+ * @param {string} [params.membershipNumber] - match finance rows by GL member id
+ * @param {string} [params.resourceType] - optional filter (profile | subscription | application | finance)
  * @param {number} [params.limit]
  * @param {number} [params.offset]
  */
 export async function findMemberAuditLogs({
   tenantId,
   profileId,
+  membershipNumber = null,
   subscriptionIds = [],
   applicationIds = [],
   resourceType = null,
@@ -152,6 +195,10 @@ export async function findMemberAuditLogs({
 
   const subIds = (subscriptionIds || []).map(String).filter(Boolean);
   const appIds = (applicationIds || []).map(String).filter(Boolean);
+  const memberNo =
+    membershipNumber != null && String(membershipNumber).trim()
+      ? String(membershipNumber).trim()
+      : null;
 
   const orParts = [profileClause];
 
@@ -167,6 +214,22 @@ export async function findMemberAuditLogs({
     );
     params.push(appIds);
   }
+
+  const financeParts = [
+    `(resource_type = 'finance' AND resource_id = $${idx++})`,
+  ];
+  params.push(String(profileId));
+  if (memberNo) {
+    financeParts.push(
+      `(resource_type = 'finance' AND after_state->>'memberId' = $${idx++})`,
+    );
+    params.push(memberNo);
+    financeParts.push(
+      `(resource_type = 'journal' AND after_state->>'memberId' = $${idx++})`,
+    );
+    params.push(memberNo);
+  }
+  orParts.push(`(${financeParts.join(" OR ")})`);
 
   clauses.push(`tenant_id = $1`);
   clauses.push(`(${orParts.join(" OR ")})`);

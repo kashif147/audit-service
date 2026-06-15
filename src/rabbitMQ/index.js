@@ -10,6 +10,7 @@ import { handleProductEvent }      from "./listeners/product.listener.js";
 import { handleBatchEvent }        from "./listeners/batch.listener.js";
 import { handleJournalEvent }      from "./listeners/journal.listener.js";
 import { handleProfileEvent }      from "./listeners/profile.listener.js";
+import { handleFinanceEvent }      from "./listeners/finance.listener.js";
 
 // ── Queues ────────────────────────────────────────────────────────────────────
 const QUEUES = {
@@ -20,6 +21,7 @@ const QUEUES = {
   batch:       "audit.batch.events",
   journal:     "audit.journal.events",
   profile:     "audit.profile.events",
+  finance:     "audit.finance.events",
 };
 
 export async function initEventSystem() {
@@ -33,6 +35,7 @@ export async function initEventSystem() {
     // Not in middleware default list; needed before account-service asserts it.
     exchanges: [
       { name: "batch.events", type: "topic", options: { durable: true } },
+      { name: "finance.events", type: "topic", options: { durable: true } },
     ],
   });
   logger.info("RabbitMQ initialised for audit-service");
@@ -148,7 +151,14 @@ export async function setupConsumers() {
 
   // ── batch.events ─────────────────────────────────────────────────────────────
   await setupQueue(QUEUES.batch, [
-    { exchange: "batch.events", routingKeys: ["batch.completed"] },
+    {
+      exchange: "batch.events",
+      routingKeys: [
+        "batch.completed",
+        "batch.process.completed.v1",
+        "batch.process.queued.v1",
+      ],
+    },
   ], handleBatchEvent);
 
   // journal.created.v1: middleware defaults unknown keys to application.events; also bind journal.events if mapped later.
@@ -170,6 +180,14 @@ export async function setupConsumers() {
       ],
     },
   ], handleProfileEvent);
+
+  // ── finance.events ──────────────────────────────────────────────────────────
+  await setupQueue(QUEUES.finance, [
+    {
+      exchange: "finance.events",
+      routingKeys: ["finance.audit.v1"],
+    },
+  ], handleFinanceEvent);
 
   logger.info("All audit consumers ready");
 }

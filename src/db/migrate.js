@@ -70,8 +70,16 @@ const INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_audit_after_gin
      ON audit_logs USING GIN (after_state)`,
 
+  `CREATE INDEX IF NOT EXISTS idx_audit_metadata_dedupe_key
+     ON audit_logs ((metadata->>'dedupeKey'))
+     WHERE metadata->>'dedupeKey' IS NOT NULL`,
+
   `CREATE INDEX IF NOT EXISTS idx_audit_metadata_gin
      ON audit_logs USING GIN (metadata)`,
+
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_tenant_event_id
+     ON audit_logs (tenant_id, event_id)
+     WHERE event_id IS NOT NULL`,
 ];
 
 export async function runMigrations() {

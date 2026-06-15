@@ -1,5 +1,7 @@
 import { findAuditLogs, getResourceHistory, findMemberAuditLogs } from "../models/auditLog.model.js";
 import { expandAuditRowsToChanges } from "../helpers/auditDiff.js";
+import { enrichAuditActors } from "../helpers/auditActorEnrichment.js";
+import { enrichAuditValues } from "../helpers/auditValueEnrichment.js";
 import { query } from "../config/db.js";
 
 function parseIdList(raw) {
@@ -76,6 +78,7 @@ export async function getMemberAuditHistory(req, res, next) {
     const result = await findMemberAuditLogs({
       tenantId,
       profileId: String(profileId),
+      membershipNumber: req.query.membershipNumber || null,
       subscriptionIds: parseIdList(req.query.subscriptionIds),
       applicationIds: parseIdList(req.query.applicationIds),
       resourceType: req.query.resourceType || null,
@@ -85,6 +88,8 @@ export async function getMemberAuditHistory(req, res, next) {
 
     if (diffOnly) {
       const changes = expandAuditRowsToChanges(result.items);
+      await enrichAuditActors(changes, { tenantId, req });
+      await enrichAuditValues(changes, { tenantId, req });
       return res.success({
         profileId: String(profileId),
         total: result.total,

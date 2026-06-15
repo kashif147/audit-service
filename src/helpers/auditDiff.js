@@ -161,11 +161,22 @@ function dedupeExpandedItems(items) {
   const DEDUPE_MS = 60_000;
   const eventOnly = [];
   const bestByKey = new Map();
+  const bestEventOnly = new Map();
 
   for (const item of items) {
     const canon = canonicalAuditField(item.field);
     if (!canon) {
-      eventOnly.push(item);
+      const t = new Date(item.occurredAt).getTime();
+      const bucket = Number.isFinite(t) ? Math.floor(t / DEDUPE_MS) : 0;
+      const docNo = extractFinanceDocNo(item);
+      const eventKey = `${item.auditLogId}|${item.action}|${item.resourceType}|${item.resourceId}|${docNo}|${bucket}`;
+      const prev = bestEventOnly.get(eventKey);
+      if (
+        !prev ||
+        expandedItemQualityScore(item) > expandedItemQualityScore(prev)
+      ) {
+        bestEventOnly.set(eventKey, item);
+      }
       continue;
     }
 
@@ -178,7 +189,51 @@ function dedupeExpandedItems(items) {
     }
   }
 
-  return [...eventOnly, ...bestByKey.values()];
+  return [...bestEventOnly.values(), ...bestByKey.values()];
+}
+
+function extractFinanceDocNo(item) {
+  const raw = item?.newValue;
+  if (typeof raw === "string" && raw.includes("Doc ")) {
+    const match = raw.match(/Doc\s+([^\s·]+)/);
+    if (match?.[1]) return match[1];
+  }
+  return "";
+}
+
+function isEmptyAuditSnapshot(value) {
+  if (value == null) return true;
+  if (typeof value !== "object") return false;
+  return Object.keys(value).length === 0;
+}
+
+function formatFinanceEventSummary(after, action) {
+  if (!after || typeof after !== "object") {
+    return ACTION_LABELS[action] || action?.replace(/_/g, " ").toLowerCase() || "—";
+  }
+  const parts = [];
+  if (after.docNo) parts.push(`Doc ${after.docNo}`);
+  if (after.docType) parts.push(String(after.docType));
+  if (after.paymentMethod) {
+    parts.push(String(after.paymentMethod).replace(/_/g, " "));
+  }
+  if (after.amountCents != null) parts.push(`${after.amountCents} cents`);
+  else if (after.totalDebit != null) parts.push(`Debit ${after.totalDebit}`);
+  if (after.status) parts.push(String(after.status));
+  if (after.memo && parts.length < 3) {
+    const memo = String(after.memo);
+    parts.push(memo.length > 80 ? `${memo.slice(0, 77)}…` : memo);
+  }
+  return parts.length
+    ? parts.join(" · ")
+    : ACTION_LABELS[action] || action?.replace(/_/g, " ").toLowerCase() || "—";
+}
+
+function shouldRenderFinanceAsSingleRow(row, before, after, changedFields) {
+  if (row.resource_type !== "finance") return false;
+  if (changedFields?.length) return false;
+  if (!isEmptyAuditSnapshot(before)) return false;
+  return Boolean(after && typeof after === "object");
 }
 
 const ACTION_LABELS = {
@@ -204,6 +259,40 @@ const ACTION_LABELS = {
   APPLICATION_APPROVED: "Application approved",
   APPLICATION_REJECTED: "Application rejected",
   APPLICATION_SUBMITTED: "Application submitted",
+  JOURNAL_POSTED: "General ledger posting",
+  RECEIPT_POSTED: "Receipt posted",
+  ONLINE_PAYMENT_RECEIPT_POSTED: "Online payment receipt posted",
+  CHEQUE_RECEIPT_POSTED: "Cheque receipt posted",
+  CASH_RECEIPT_POSTED: "Cash receipt posted",
+  SALARY_DEDUCTION_RECEIPT_POSTED: "Salary deduction receipt posted",
+  STANDING_ORDER_RECEIPT_POSTED: "Standing order receipt posted",
+  DIRECT_DEBIT_RECEIPT_POSTED: "Direct debit receipt posted",
+  BATCH_RECEIPT_POSTED: "Batch receipt posted",
+  INVOICE_POSTED: "Invoice posted",
+  CREDIT_NOTE_POSTED: "Credit note posted",
+  CREDIT_NOTE_DRAFT_CREATED: "Credit note draft created",
+  CREDIT_NOTE_APPROVED: "Credit note approved",
+  CREDIT_NOTE_CANCELLED: "Credit note cancelled",
+  REFUND_POSTED: "Refund posted",
+  WRITE_OFF_POSTED: "Write-off posted",
+  ADJUSTMENT_POSTED: "Adjustment posted",
+  FEE_ADJUSTMENT_POSTED: "Fee adjustment posted",
+  FEE_INCREASE_POSTED: "Fee increase posted",
+  FEE_DECREASE_POSTED: "Fee decrease posted",
+  SETTLEMENT_POSTED: "Settlement posted",
+  CLAIM_POSTED: "Claim posted",
+  RECEIPT_REVERSED: "Receipt reversed",
+  CLAIM_REVERSED: "Claim reversed",
+  MEMBER_CREDIT_APPLIED: "Member credit applied",
+  PAYMENT_REASSIGNED: "Payment reassigned",
+  JOURNAL_ADJUSTMENT_DRAFT_CREATED: "Journal adjustment draft created",
+  JOURNAL_ADJUSTMENT_APPROVED: "Journal adjustment approved",
+  JOURNAL_ADJUSTMENT_POSTED: "Journal adjustment posted",
+  BATCH_PROCESS_COMPLETED: "Batch import processed",
+  BATCH_PROCESS_QUEUED: "Batch import queued",
+  RECONCILIATION_MANUAL_MATCHED: "Reconciliation matched",
+  RECONCILIATION_MOVED_TO_SUSPENSE: "Reconciliation moved to suspense",
+  RECONCILIATION_SETTLED: "Reconciliation settled",
 };
 
 /**
@@ -238,6 +327,24 @@ export function expandAuditRowsToChanges(rows) {
       changedFields,
       changedPaths: changedFields,
     });
+
+    if (shouldRenderFinanceAsSingleRow(row, before, after, changedFields)) {
+      items.push({
+        auditLogId: row.id,
+        resourceType: row.resource_type,
+        resourceId: row.resource_id,
+        action: row.action,
+        service: row.service,
+        field: null,
+        changeDescription: describeAuditChange(row.action),
+        oldValue: "—",
+        newValue: formatFinanceEventSummary(after, row.action),
+        occurredAt: row.occurred_at,
+        actorId: row.actor_id,
+        actorEmail: row.actor_email,
+      });
+      continue;
+    }
 
     if (changes.length === 0) {
       items.push({

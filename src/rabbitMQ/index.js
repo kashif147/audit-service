@@ -101,8 +101,10 @@ export async function setupConsumers() {
     {
       exchange: "application.events",
       routingKeys: [
-        "applications.review.approved.v1",
+        "applications.review.processed.v1",
         "applications.review.rejected.v1",
+        "applications.executive-council.approved.v1",
+        "applications.executive-council.rejected.v1",
         "application.status.submitted.v1",
         "applications.duplicate.review.decided.v1",
         "applications.duplicate.detection.run.v1",

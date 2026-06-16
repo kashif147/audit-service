@@ -8,7 +8,7 @@ import { query } from "../config/db.js";
  * @param {string}  log.eventType      - RabbitMQ routing key
  * @param {string}  log.exchange       - RabbitMQ exchange name
  * @param {string}  log.service        - originating service
- * @param {string}  log.action         - e.g. APPLICATION_APPROVED
+ * @param {string}  log.action         - e.g. APPLICATION_PROCESSED
  * @param {string}  [log.resourceType] - e.g. "application"
  * @param {string}  [log.resourceId]
  * @param {string}  [log.actorId]

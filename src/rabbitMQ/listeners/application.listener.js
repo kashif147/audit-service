@@ -2,8 +2,10 @@ import { createAuditLog } from "../../models/auditLog.model.js";
 import logger from "../../config/logger.js";
 
 const ACTION_MAP = {
-  "applications.review.approved.v1": "APPLICATION_APPROVED",
+  "applications.review.processed.v1": "APPLICATION_PROCESSED",
   "applications.review.rejected.v1": "APPLICATION_REJECTED",
+  "applications.executive-council.approved.v1": "EXECUTIVE_COUNCIL_APPROVED",
+  "applications.executive-council.rejected.v1": "EXECUTIVE_COUNCIL_REJECTED",
   "application.status.submitted.v1": "APPLICATION_SUBMITTED",
   "application.status.submitted": "APPLICATION_SUBMITTED",
   "applications.duplicate.review.decided.v1": "DUPLICATE_REVIEW_DECIDED",

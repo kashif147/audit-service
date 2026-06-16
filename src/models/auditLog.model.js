@@ -89,6 +89,8 @@ export async function createAuditLog(log) {
         before_state, after_state, metadata,
         occurred_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+     ON CONFLICT (tenant_id, event_id) WHERE event_id IS NOT NULL
+     DO UPDATE SET event_id = EXCLUDED.event_id
      RETURNING *`,
     [
       tenantId, eventType, exchange, service, action,

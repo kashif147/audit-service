@@ -44,6 +44,25 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 `;
 
+const DEDUPE_EVENT_ROWS = `
+WITH duplicates AS (
+  SELECT id
+  FROM (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        PARTITION BY tenant_id, event_id
+        ORDER BY occurred_at ASC, created_at ASC, id ASC
+      ) AS row_num
+    FROM audit_logs
+    WHERE event_id IS NOT NULL
+  ) ranked
+  WHERE row_num > 1
+)
+DELETE FROM audit_logs
+WHERE id IN (SELECT id FROM duplicates);
+`;
+
 const INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_audit_tenant_occurred
      ON audit_logs (tenant_id, occurred_at DESC)`,
@@ -88,6 +107,11 @@ export async function runMigrations() {
 
   await query(CREATE_TABLE);
   console.log("✓ Table audit_logs created");
+
+  const dedupeResult = await query(DEDUPE_EVENT_ROWS);
+  if (dedupeResult.rowCount) {
+    console.log(`✓ Removed ${dedupeResult.rowCount} duplicate audit event rows`);
+  }
 
   for (const idx of INDEXES) {
     await query(idx);

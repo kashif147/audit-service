@@ -20,6 +20,7 @@ services:
       - ${ENV_COMMON_PATH:-../../config/.env.common}
       - .env.staging
     environment:
+      LOG_ROOT: /var/log/projectshell
       RUN_AUDIT_MIGRATIONS: "true"
       GATEWAY_HANDLES_CORS: "true"
     healthcheck:

@@ -11,6 +11,7 @@ import { handleBatchEvent }        from "./listeners/batch.listener.js";
 import { handleJournalEvent }      from "./listeners/journal.listener.js";
 import { handleProfileEvent }      from "./listeners/profile.listener.js";
 import { handleFinanceEvent }      from "./listeners/finance.listener.js";
+import { handleEventsEvent }       from "./listeners/events.listener.js";
 
 // ── Queues ────────────────────────────────────────────────────────────────────
 const QUEUES = {
@@ -22,6 +23,7 @@ const QUEUES = {
   journal:     "audit.journal.events",
   profile:     "audit.profile.events",
   finance:     "audit.finance.events",
+  events:      "audit.events.events",
 };
 
 export async function initEventSystem() {
@@ -36,6 +38,7 @@ export async function initEventSystem() {
     exchanges: [
       { name: "batch.events", type: "topic", options: { durable: true } },
       { name: "finance.events", type: "topic", options: { durable: true } },
+      { name: "events.events", type: "topic", options: { durable: true } },
     ],
   });
   logger.info("RabbitMQ initialised for audit-service");
@@ -190,6 +193,19 @@ export async function setupConsumers() {
       routingKeys: ["finance.audit.v1"],
     },
   ], handleFinanceEvent);
+
+  // ── events.events (published by events-service) ─────────────────────────────
+  await setupQueue(QUEUES.events, [
+    {
+      exchange: "events.events",
+      routingKeys: [
+        "events.registration.created.v1",
+        "events.registration.confirmed.v1",
+        "events.registration.cancelled.v1",
+        "events.certificate.issued.v1",
+      ],
+    },
+  ], handleEventsEvent);
 
   logger.info("All audit consumers ready");
 }

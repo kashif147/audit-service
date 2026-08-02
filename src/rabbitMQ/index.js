@@ -12,6 +12,7 @@ import { handleJournalEvent }      from "./listeners/journal.listener.js";
 import { handleProfileEvent }      from "./listeners/profile.listener.js";
 import { handleFinanceEvent }      from "./listeners/finance.listener.js";
 import { handleEventsEvent }       from "./listeners/events.listener.js";
+import { handleIssueAuditEvent }   from "./listeners/issues.listener.js";
 
 // ── Queues ────────────────────────────────────────────────────────────────────
 const QUEUES = {
@@ -24,6 +25,7 @@ const QUEUES = {
   profile:     "audit.profile.events",
   finance:     "audit.finance.events",
   events:      "audit.events.events",
+  issues:      "audit.issues.events",
 };
 
 export async function initEventSystem() {
@@ -39,6 +41,7 @@ export async function initEventSystem() {
       { name: "batch.events", type: "topic", options: { durable: true } },
       { name: "finance.events", type: "topic", options: { durable: true } },
       { name: "events.events", type: "topic", options: { durable: true } },
+      { name: "issues.events", type: "topic", options: { durable: true } },
     ],
   });
   logger.info("RabbitMQ initialised for audit-service");
@@ -206,6 +209,14 @@ export async function setupConsumers() {
       ],
     },
   ], handleEventsEvent);
+
+  // ── issues.events (published by issue-service) ──────────────────────────────
+  await setupQueue(QUEUES.issues, [
+    {
+      exchange: "issues.events",
+      routingKeys: ["issues.issue.audit.v1"],
+    },
+  ], handleIssueAuditEvent);
 
   logger.info("All audit consumers ready");
 }

@@ -13,6 +13,7 @@ import responseMiddleware from "./middlewares/response.mw.js";
 import errorHandler from "./middlewares/errorHandler.js";
 import notFound from "./middlewares/notFound.js";
 import { ensureAuthenticated } from "./middlewares/auth.js";
+import { tenantContextWarn } from "./middlewares/tenantContext.mw.js";
 import routes from "./routes/index.js";
 import internalAuditRoutes from "./routes/internalAudit.routes.js";
 import {
@@ -39,8 +40,8 @@ app.use("/internal", internalAuditRoutes);
 app.get("/health", (req, res) => res.status(200).json({ status: "UP" }));
 app.get("/ready",  (req, res) => res.success({ ok: true }));
 
-// ── API (auth identity → policy per route) ───────────────────────────────────
-app.use("/api", ensureAuthenticated, routes);
+// ── API (auth identity → tenant-context warn → policy per route) ─────────────
+app.use("/api", ensureAuthenticated, tenantContextWarn, routes);
 
 app.use(notFound);
 app.use(logErrorMiddleware(bizLogger));

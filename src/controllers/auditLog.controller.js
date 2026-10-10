@@ -48,10 +48,25 @@ export async function listAuditLogs(req, res, next) {
 
 /**
  * GET /api/audit-logs/:id
+ *
+ * Tenant-scoped (Phase 2B0): the row must belong to the trusted tenant established by
+ * ensureAuthenticated and re-pinned by the app-level tenant-context guard (req.ctx.tenantId).
+ * The raw x-tenant-id header and ?tenantId= are never used here. Another tenant's id, an
+ * unknown id and a non-numeric id all return the same 404, so ids cannot be probed across
+ * tenants.
  */
 export async function getAuditLog(req, res, next) {
   try {
-    const { rows } = await query("SELECT * FROM audit_logs WHERE id = $1", [req.params.id]);
+    const tenantId = req.ctx?.tenantId || req.tenantId;
+    if (!tenantId) return res.fail("Tenant context required", 400);
+
+    const id = String(req.params.id || "");
+    if (!/^\d{1,18}$/.test(id)) return res.fail("Audit log not found", 404);
+
+    const { rows } = await query(
+      "SELECT * FROM audit_logs WHERE id = $1 AND tenant_id = $2",
+      [id, String(tenantId)]
+    );
     if (!rows.length) return res.fail("Audit log not found", 404);
     res.success(rows[0]);
   } catch (err) {

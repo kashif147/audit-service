@@ -42,6 +42,9 @@ export async function initEventSystem() {
       { name: "finance.events", type: "topic", options: { durable: true } },
       { name: "events.events", type: "topic", options: { durable: true } },
       { name: "issues.events", type: "topic", options: { durable: true } },
+      // product.events: only in the middleware defaults on its develop/gateway line (1913bdb),
+      // not in the pinned main/db70fb8. audit.product.events binds to it.
+      { name: "product.events", type: "topic", options: { durable: true } },
     ],
   });
   logger.info("RabbitMQ initialised for audit-service");

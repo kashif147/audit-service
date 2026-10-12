@@ -2,6 +2,7 @@ import { init, consumer, shutdown } from "@projectShell/rabbitmq-middleware";
 import logger from "../config/logger.js";
 import bizLogger from "../config/bizLogger.js";
 import { createRabbitStructuredLogHandlers } from "@projectShell/logging-lib";
+import { assertExchangeBindable } from "./exchangeGuard.js";
 
 import { handleUserEvent }         from "./listeners/user.listener.js";
 import { handleApplicationEvent }  from "./listeners/application.listener.js";
@@ -66,6 +67,9 @@ export async function setupConsumers() {
       const routingKeyExchange = new Map();
 
       for (const { exchange, routingKeys } of bindings) {
+        // Check first on a throwaway channel: binding to a missing exchange would close the
+        // shared channel and kill every consumer already started (see exchangeGuard.js).
+        await assertExchangeBindable(exchange);
         await consumer.bindQueue(queueName, exchange, routingKeys);
         for (const rk of routingKeys) {
           if (!routingKeyExchange.has(rk)) routingKeyExchange.set(rk, exchange);

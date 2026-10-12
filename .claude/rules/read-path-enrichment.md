@@ -1,7 +1,10 @@
 # Read path (row → API)
 
 `src/controllers/auditLog.controller.js` exposes list/get/summary endpoints under
-`/api/audit-logs*`, all requiring `x-tenant-id`.
+`/api/audit-logs*`. Every handler reads the tenant from the trusted context only
+(`req.ctx.tenantId` / `req.tenantId`, set by `ensureAuthenticated` + `tenantContextWarn`), never
+the raw `x-tenant-id` header or `?tenantId=` — on the Bearer path that header is caller-controlled.
+Guarded by `tests/auditLogReads.tenantScope.test.js` and `tests/auditLogGetById.tenantScope.test.js`.
 
 The interesting one is `getMemberAuditHistory` (`GET /api/audit-logs/member/:profileId`): by
 default (`diffOnly=true`) it doesn't return raw rows — it runs them through a three-stage

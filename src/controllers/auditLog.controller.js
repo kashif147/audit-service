@@ -15,13 +15,13 @@ function parseIdList(raw) {
 
 /**
  * GET /api/audit-logs
- * Query params: tenantId, resourceType, resourceId, actorId, action,
+ * Query params: resourceType, resourceId, actorId, action,
  *               service, eventType, from, to, limit, offset
  */
 export async function listAuditLogs(req, res, next) {
   try {
-    const tenantId = req.headers["x-tenant-id"] || req.query.tenantId;
-    if (!tenantId) return res.fail("x-tenant-id header is required", 400);
+    const tenantId = req.ctx?.tenantId || req.tenantId;
+    if (!tenantId) return res.fail("Tenant context required", 400);
 
     const limit  = Math.min(parseInt(req.query.limit  || "500"),  1000);
     const offset = Math.max(parseInt(req.query.offset || "0"),   0);
@@ -80,8 +80,8 @@ export async function getAuditLog(req, res, next) {
  */
 export async function getMemberAuditHistory(req, res, next) {
   try {
-    const tenantId = req.headers["x-tenant-id"] || req.query.tenantId;
-    if (!tenantId) return res.fail("x-tenant-id header is required", 400);
+    const tenantId = req.ctx?.tenantId || req.tenantId;
+    if (!tenantId) return res.fail("Tenant context required", 400);
 
     const { profileId } = req.params;
     if (!profileId) return res.fail("profileId is required", 400);
@@ -127,8 +127,8 @@ export async function getMemberAuditHistory(req, res, next) {
  */
 export async function getResourceAuditHistory(req, res, next) {
   try {
-    const tenantId = req.headers["x-tenant-id"] || req.query.tenantId;
-    if (!tenantId) return res.fail("x-tenant-id header is required", 400);
+    const tenantId = req.ctx?.tenantId || req.tenantId;
+    if (!tenantId) return res.fail("Tenant context required", 400);
 
     const { resourceType, resourceId } = req.params;
     const rows = await getResourceHistory(tenantId, resourceType, resourceId);
@@ -144,8 +144,8 @@ export async function getResourceAuditHistory(req, res, next) {
  */
 export async function getAuditSummary(req, res, next) {
   try {
-    const tenantId = req.headers["x-tenant-id"] || req.query.tenantId;
-    if (!tenantId) return res.fail("x-tenant-id header is required", 400);
+    const tenantId = req.ctx?.tenantId || req.tenantId;
+    if (!tenantId) return res.fail("Tenant context required", 400);
 
     const from = req.query.from || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const to   = req.query.to   || new Date().toISOString();

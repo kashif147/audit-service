@@ -19,4 +19,4 @@ import { tenantContextMiddleware } from "@membership/policy-middleware";
  * mismatches without changing controller query behaviour. Switching controllers
  * to the trusted tenant is deferred to Phase 1C.
  */
-export const tenantContextWarn = tenantContextMiddleware({ mode: "warn" });
+export const tenantContextWarn = tenantContextMiddleware();

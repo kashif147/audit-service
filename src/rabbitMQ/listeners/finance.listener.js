@@ -27,7 +27,7 @@ export async function handleFinanceEvent(payload, eventType, exchange) {
         : data.resourceId || data.batchDetailId || data.docNo || null;
 
   await createAuditLog({
-    tenantId: data.tenantId || payload.tenantId || "unknown",
+    tenantId: payload.tenantId,
     eventType,
     exchange,
     service: payload.metadata?.service || "account-service",

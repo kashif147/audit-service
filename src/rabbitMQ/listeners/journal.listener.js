@@ -21,7 +21,7 @@ export async function handleJournalEvent(payload, eventType, exchange) {
         : data.docNo || data.journalId;
 
   await createAuditLog({
-    tenantId: data.tenantId || payload.tenantId || "unknown",
+    tenantId: payload.tenantId,
     eventType,
     exchange,
     service: payload.metadata?.service || "account-service",

@@ -12,7 +12,7 @@ export async function handleEventsEvent(payload, eventType, exchange) {
   const data = payload.data || payload;
 
   await createAuditLog({
-    tenantId: data.tenantId || payload.tenantId || "unknown",
+    tenantId: payload.tenantId,
     eventType,
     exchange,
     service: payload.metadata?.service || "events-service",

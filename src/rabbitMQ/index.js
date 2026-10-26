@@ -3,6 +3,7 @@ import logger from "../config/logger.js";
 import bizLogger from "../config/bizLogger.js";
 import { createRabbitStructuredLogHandlers } from "@projectShell/logging-lib";
 import { assertExchangeBindable } from "./exchangeGuard.js";
+import { runTenantGatedHandler } from "./eventTenant.js";
 
 import { handleUserEvent }         from "./listeners/user.listener.js";
 import { handleApplicationEvent }  from "./listeners/application.listener.js";
@@ -79,9 +80,19 @@ export async function setupConsumers() {
       const allKeys = [...routingKeyExchange.keys()];
       for (const key of allKeys) {
         const boundExchange = routingKeyExchange.get(key);
-        consumer.registerHandler(key, async (payload) => {
+        consumer.registerHandler(key, async (payload, messageContext) => {
+          // Phase A / A1: an audit row is tenant-owned. The gate resolves the event tenant before any
+          // write and rejects (log + skip, no throw - see eventTenant.js) when it is missing, malformed
+          // or inconsistent. A placeholder tenant such as "unknown" is never persisted.
           try {
-            await handler(payload, key, boundExchange);
+            await runTenantGatedHandler({
+              payload,
+              messageContext,
+              handler,
+              eventType: key,
+              exchange: boundExchange,
+              log: logger,
+            });
           } catch (err) {
             logger.error({ eventType: key, error: err.message }, "Audit handler error");
           }

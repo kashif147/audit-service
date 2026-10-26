@@ -12,7 +12,7 @@ export async function handleBatchEvent(payload, eventType, exchange) {
   const action = BATCH_ACTIONS[eventType] || "BATCH_COMPLETED";
 
   await createAuditLog({
-    tenantId: data.tenantId || payload.tenantId || "unknown",
+    tenantId: payload.tenantId,
     eventType,
     exchange,
     service: payload.metadata?.service || "account-service",

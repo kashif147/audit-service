@@ -1,4 +1,5 @@
 import { query } from "../config/db.js";
+import { isValidTenantId } from "../helpers/tenantValue.js";
 
 /**
  * Insert one audit log row.
@@ -22,6 +23,12 @@ import { query } from "../config/db.js";
  * @returns {Promise<object>} inserted row
  */
 export async function createAuditLog(log) {
+  // Phase A / A1 defence in depth: never persist an audit row without a real tenant owner.
+  if (!isValidTenantId(log?.tenantId)) {
+    const err = new Error("Audit row requires a valid tenant");
+    err.code = "AUDIT_TENANT_REQUIRED";
+    throw err;
+  }
   const {
     tenantId,
     eventType,

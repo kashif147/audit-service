@@ -66,7 +66,7 @@ export async function handleMembershipEvent(payload, eventType, exchange) {
   const beforeState = data.before != null ? data.before : null;
 
   await createAuditLog({
-    tenantId: data.tenantId || payload.tenantId || "unknown",
+    tenantId: payload.tenantId,
     eventType,
     exchange,
     service: metadata.service || "subscription-service",

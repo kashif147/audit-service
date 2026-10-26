@@ -29,7 +29,7 @@ export async function handleProductEvent(payload, eventType, exchange) {
   const data = payload.data || payload;
 
   await createAuditLog({
-    tenantId:      data.tenantId || payload.tenantId || "unknown",
+    tenantId:      payload.tenantId,
     eventType,
     exchange,
     service:       payload.metadata?.service || "user-service",

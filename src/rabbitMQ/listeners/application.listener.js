@@ -32,7 +32,7 @@ export async function handleApplicationEvent(payload, eventType, exchange) {
       : ACTION_MAP[eventType] || "UNKNOWN";
 
   await createAuditLog({
-    tenantId:      data.tenantId || payload.tenantId || "unknown",
+    tenantId:      payload.tenantId,
     eventType,
     exchange,
     service:       payload.metadata?.service || "unknown-service",

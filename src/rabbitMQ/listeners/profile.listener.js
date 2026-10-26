@@ -16,7 +16,7 @@ export async function handleProfileEvent(payload, eventType, exchange) {
     eventType === "profile.duplicate.merged";
 
   await createAuditLog({
-    tenantId: data.tenantId || payload.tenantId || "unknown",
+    tenantId: payload.tenantId,
     eventType,
     exchange,
     service: payload.metadata?.service || "profile-service",

@@ -11,6 +11,7 @@
 // There is no "unknown"/"default" tenant.
 
 import { cleanTenant as clean, isValidTenantId } from "../helpers/tenantValue.js";
+import { resolveAuditContext } from "../helpers/auditContext.js";
 
 export { isValidTenantId };
 
@@ -51,6 +52,24 @@ export async function runTenantGatedHandler({ payload, messageContext, handler, 
       "AuditEventTenantRejected",
     );
     return false;
+  }
+  // Phase B / Z4: an actor / target context, when the producer sends one (metadata.auditContext), must be
+  // valid for the resolved owner tenant - otherwise the event is skipped the same way (never stored with a
+  // guessed scope or tenant). No context = the compatible tenant mapping (createAuditLog).
+  const auditContext = payload?.metadata && typeof payload.metadata === "object" ? payload.metadata.auditContext : undefined;
+  if (auditContext !== undefined) {
+    const ctx = resolveAuditContext({
+      tenantId: tenant.tenantId,
+      auditContext,
+      actorId: payload?.data?.actorId ?? null,
+    });
+    if (!ctx.ok) {
+      log.warn(
+        { eventType, eventId: payload?.eventId, correlationId: payload?.correlationId, reason: ctx.reason },
+        "AuditEventContextRejected",
+      );
+      return false;
+    }
   }
   await handler({ ...payload, tenantId: tenant.tenantId }, eventType, exchange);
   return true;

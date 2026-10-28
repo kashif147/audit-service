@@ -44,6 +44,23 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 `;
 
+// Phase B / Z4: actor / target-tenant context (src/helpers/auditContext.js). Additive and nullable:
+// existing rows keep NULL (no historical rewrite), existing columns, constraints and indexes are unchanged,
+// and tenant_id keeps its A1 meaning (the row's trusted owner tenant). Idempotent - runs at every boot.
+// No new index: Z4 adds no read path on these columns (Z5/Z6 platform audit queries will justify one).
+// Reverse (manual, only with owner approval): src/db/rollback-z4.sql.
+const ACTOR_CONTEXT_COLUMNS = [
+  `ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_scope      TEXT`,
+  `ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS actor_tenant_id  TEXT`,
+  `ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS target_tenant_id TEXT`,
+  `DO $$ BEGIN
+     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'audit_logs_actor_scope_check') THEN
+       ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_actor_scope_check
+         CHECK (actor_scope IS NULL OR actor_scope IN ('tenant', 'platform', 'system'));
+     END IF;
+   END $$`,
+];
+
 const DEDUPE_EVENT_ROWS = `
 WITH duplicates AS (
   SELECT id
@@ -107,6 +124,11 @@ export async function runMigrations() {
 
   await query(CREATE_TABLE);
   console.log("✓ Table audit_logs created");
+
+  for (const stmt of ACTOR_CONTEXT_COLUMNS) {
+    await query(stmt);
+  }
+  console.log("✓ Actor / target context columns present");
 
   const dedupeResult = await query(DEDUPE_EVENT_ROWS);
   if (dedupeResult.rowCount) {

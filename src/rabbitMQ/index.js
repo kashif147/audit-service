@@ -15,6 +15,7 @@ import { handleProfileEvent }      from "./listeners/profile.listener.js";
 import { handleFinanceEvent }      from "./listeners/finance.listener.js";
 import { handleEventsEvent }       from "./listeners/events.listener.js";
 import { handleIssueAuditEvent }   from "./listeners/issues.listener.js";
+import { handlePlatformEvent, PLATFORM_EVENT_TYPES } from "./listeners/platform.listener.js";
 
 // ── Queues ────────────────────────────────────────────────────────────────────
 const QUEUES = {
@@ -28,6 +29,7 @@ const QUEUES = {
   finance:     "audit.finance.events",
   events:      "audit.events.events",
   issues:      "audit.issues.events",
+  platform:    "audit.platform.events",
 };
 
 export async function initEventSystem() {
@@ -118,6 +120,13 @@ export async function setupConsumers() {
       ],
     },
   ], handleUserEvent);
+
+  // Phase B / Z4: platform-auth security events from user-service (claim issued / refused for a real
+  // principal, enforced platform authorization allow / deny). Same user.events exchange, own queue and
+  // routing keys (no other service binds these keys).
+  await setupQueue(QUEUES.platform, [
+    { exchange: "user.events", routingKeys: [...PLATFORM_EVENT_TYPES] },
+  ], handlePlatformEvent);
 
   // application.events: approvals/rejections (+ optional .v1 submission if introduced).
   // accounts.events: account-service publishes application.status.submitted here (middleware mapping).

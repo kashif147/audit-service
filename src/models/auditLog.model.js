@@ -1,5 +1,6 @@
 import { query } from "../config/db.js";
 import { isValidTenantId } from "../helpers/tenantValue.js";
+import { resolveAuditContext } from "../helpers/auditContext.js";
 
 /**
  * Insert one audit log row.
@@ -20,6 +21,8 @@ import { isValidTenantId } from "../helpers/tenantValue.js";
  * @param {object}  [log.after]
  * @param {object}  [log.metadata]
  * @param {Date}    [log.occurredAt]
+ * @param {object}  [log.auditContext]  - Phase B / Z4 actor / target context (helpers/auditContext.js);
+ *                                        falls back to metadata.auditContext, then to the tenant mapping
  * @returns {Promise<object>} inserted row
  */
 export async function createAuditLog(log) {
@@ -46,6 +49,19 @@ export async function createAuditLog(log) {
     metadata     = null,
     occurredAt   = new Date(),
   } = log;
+
+  // Phase B / Z4: actor / target-tenant context. Fails closed; tenant_id is never changed by it.
+  const ctx = resolveAuditContext({
+    tenantId,
+    auditContext: log.auditContext ?? (metadata && typeof metadata === "object" ? metadata.auditContext : undefined) ?? null,
+    actorId,
+  });
+  if (!ctx.ok) {
+    const err = new Error("Audit row has an invalid actor / target context");
+    err.code = "AUDIT_CONTEXT_INVALID";
+    err.reason = ctx.reason;
+    throw err;
+  }
 
   if (eventId) {
     const { rows: byEvent } = await query(
@@ -94,8 +110,9 @@ export async function createAuditLog(log) {
         resource_type, resource_id, actor_id, actor_email,
         correlation_id, event_id,
         before_state, after_state, metadata,
-        occurred_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        occurred_at,
+        actor_scope, actor_tenant_id, target_tenant_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
      ON CONFLICT (tenant_id, event_id) WHERE event_id IS NOT NULL
      DO UPDATE SET event_id = EXCLUDED.event_id
      RETURNING *`,
@@ -107,6 +124,7 @@ export async function createAuditLog(log) {
       after   ? JSON.stringify(after)    : null,
       metadata ? JSON.stringify(metadata) : null,
       occurredAt,
+      ctx.actorScope, ctx.actorTenantId, ctx.targetTenantId,
     ]
   );
 

@@ -1,6 +1,7 @@
 import { createAuditLog } from "../models/auditLog.model.js";
 import logger from "../config/logger.js";
 import { cleanTenant, isValidTenantId } from "../helpers/tenantValue.js";
+import { resolveAuditContext } from "../helpers/auditContext.js";
 
 const fail = (res, status, code, message) =>
   res.status(status).json({ status: "fail", code, message, timestamp: new Date().toISOString() });
@@ -17,6 +18,10 @@ const isInternalRequest = (req) => {
  * `x-internal-request: true` + `x-tenant-id` (in-network only; the gateway strips both). A body
  * `tenantId` can never decide ownership: if present it must equal the header, otherwise 403.
  * Body must include action.
+ *
+ * Phase B / Z4: an optional body `auditContext` ({ actorScope, actorTenantId, targetTenantId, loginTenantId })
+ * is validated against the trusted header tenant (helpers/auditContext.js): it can describe the actor, never
+ * move the row or point a tenant actor at another tenant. Without it the tenant mapping is derived.
  */
 export async function postInternalAuditLog(req, res) {
   try {
@@ -55,6 +60,19 @@ export async function postInternalAuditLog(req, res) {
       service = "communication-service",
     } = req.body || {};
 
+    // A context nested in metadata is held to the same check (createAuditLog falls back to it).
+    const auditContext = req.body?.auditContext ?? req.body?.metadata?.auditContext;
+    if (auditContext !== undefined) {
+      const ctx = resolveAuditContext({ tenantId, auditContext, actorId });
+      if (!ctx.ok) {
+        const crossTenant = ["actor_tenant_not_owner", "tenant_actor_cross_tenant", "target_not_owner"].includes(ctx.reason);
+        logger.warn({ reason: ctx.reason }, "AuditInternalContextRejected");
+        return crossTenant
+          ? fail(res, 403, "TENANT_MISMATCH", "Audit context tenant does not match trusted tenant")
+          : fail(res, 400, "AUDIT_CONTEXT_INVALID", "Invalid audit actor / target context");
+      }
+    }
+
     if (!action) {
       return res.status(400).json({
         status: "fail",
@@ -74,6 +92,7 @@ export async function postInternalAuditLog(req, res) {
       actorId,
       actorEmail,
       metadata,
+      auditContext,
     });
 
     return res.status(201).json({

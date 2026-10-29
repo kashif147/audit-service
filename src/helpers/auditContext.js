@@ -21,7 +21,9 @@
 // Anything else fails closed: the event is skipped / the insert refused - never stored with a guessed tenant.
 
 export const ACTOR_SCOPES = Object.freeze(["tenant", "platform", "system"]);
-export const SYSTEM_ACTORS = Object.freeze(["platform:migration", "platform:provisioning"]);
+// Reserved system actors. platform:principal-admin (Z5) = the operator principal-admin script; its rows live
+// only in platform_audit_logs (no target tenant), so in audit_logs it is never seen in practice.
+export const SYSTEM_ACTORS = Object.freeze(["platform:migration", "platform:provisioning", "platform:principal-admin"]);
 const CONTEXT_FIELDS = new Set(["actorScope", "actorTenantId", "targetTenantId", "loginTenantId"]);
 const INTERNAL_TENANT_ID = /^[0-9a-f]{24}$/;
 

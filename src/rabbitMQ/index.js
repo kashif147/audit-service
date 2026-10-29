@@ -15,7 +15,8 @@ import { handleProfileEvent }      from "./listeners/profile.listener.js";
 import { handleFinanceEvent }      from "./listeners/finance.listener.js";
 import { handleEventsEvent }       from "./listeners/events.listener.js";
 import { handleIssueAuditEvent }   from "./listeners/issues.listener.js";
-import { handlePlatformEvent, PLATFORM_EVENT_TYPES } from "./listeners/platform.listener.js";
+import { handleTenantLifecycleEvent, TENANT_LIFECYCLE_EVENT_TYPES } from "./listeners/tenant.listener.js";
+import { runPlatformAuditHandler, PLATFORM_EVENT_TYPES } from "./platformAudit.js";
 
 // ── Queues ────────────────────────────────────────────────────────────────────
 const QUEUES = {
@@ -30,6 +31,7 @@ const QUEUES = {
   events:      "audit.events.events",
   issues:      "audit.issues.events",
   platform:    "audit.platform.events",
+  tenant:      "audit.tenant.events",
 };
 
 export async function initEventSystem() {
@@ -60,8 +62,11 @@ export async function setupConsumers() {
    * @param {string} queueName
    * @param {{ exchange: string, routingKeys: string[] }[]} bindings
    * @param {(payload: object, eventType: string, exchange: string) => Promise<void>} handler
+   * @param {{ platform?: boolean }} [opts] platform: true = audit.platform.events (Phase B / Z5): tenantless
+   *   platform / system security events go through the platform gate into platform_audit_logs, never the
+   *   tenant gate / audit_logs (see platformAudit.js). Every other queue is tenant-gated (A1).
    */
-  async function setupQueue(queueName, bindings, handler) {
+  async function setupQueue(queueName, bindings, handler, { platform = false } = {}) {
     try {
       if (!bindings?.length) throw new Error("bindings required");
 
@@ -87,6 +92,10 @@ export async function setupConsumers() {
           // write and rejects (log + skip, no throw - see eventTenant.js) when it is missing, malformed
           // or inconsistent. A placeholder tenant such as "unknown" is never persisted.
           try {
+            if (platform) {
+              await runPlatformAuditHandler({ payload, messageContext, eventType: key, log: logger });
+              return;
+            }
             await runTenantGatedHandler({
               payload,
               messageContext,
@@ -121,12 +130,19 @@ export async function setupConsumers() {
     },
   ], handleUserEvent);
 
-  // Phase B / Z4: platform-auth security events from user-service (claim issued / refused for a real
-  // principal, enforced platform authorization allow / deny). Same user.events exchange, own queue and
-  // routing keys (no other service binds these keys).
+  // Phase B / Z4-Z5: platform / system security events from user-service (claim decisions for a real
+  // principal, enforced platform authorization allow / deny, platform tenant create / failure, principal-admin
+  // changes) -> platform_audit_logs (Z5; no tenant owner). Same user.events exchange, own queue and routing
+  // keys (no other service binds these keys). No tenant handler: the platform gate writes the row itself.
   await setupQueue(QUEUES.platform, [
     { exchange: "user.events", routingKeys: [...PLATFORM_EVENT_TYPES] },
-  ], handlePlatformEvent);
+  ], null, { platform: true });
+
+  // Phase B / Z5: tenant-visible lifecycle copy of a successful platform tenant creation (owned by the new
+  // tenant; tenant-gated like every tenant listener).
+  await setupQueue(QUEUES.tenant, [
+    { exchange: "user.events", routingKeys: [...TENANT_LIFECYCLE_EVENT_TYPES] },
+  ], handleTenantLifecycleEvent);
 
   // application.events: approvals/rejections (+ optional .v1 submission if introduced).
   // accounts.events: account-service publishes application.status.submitted here (middleware mapping).

@@ -33,7 +33,7 @@ const { resolveAuditContext, SYSTEM_ACTORS, isInternalTenantId } = await import(
 const { createAuditLog } = await import("../src/models/auditLog.model.js");
 const { runTenantGatedHandler } = await import("../src/rabbitMQ/eventTenant.js");
 const { postInternalAuditLog } = await import("../src/controllers/internalAudit.controller.js");
-const { handlePlatformEvent, PLATFORM_EVENT_TYPES } = await import("../src/rabbitMQ/listeners/platform.listener.js");
+const { buildPlatformAuditRecord, PLATFORM_EVENT_TYPES } = await import("../src/rabbitMQ/platformAudit.js");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const A = "68cbf7806080b4621d469d34";
@@ -173,18 +173,18 @@ test("internal: a body / metadata context targeting another tenant -> 403; malfo
   assert.deepStrictEqual([res.statusCode, res.body.code], [400, "AUDIT_CONTEXT_INVALID"]);
 });
 
-// ── platform listener ─────────────────────────────────────────────────────────
-test("platform listener: platform / null / null row, allow-listed fields only (no oid, issuer, email, token)", async () => {
-  assert.deepStrictEqual([...PLATFORM_EVENT_TYPES].sort(), ["platform.authz.decision.v1", "platform.claim.decision.v1"]);
-  await handlePlatformEvent({
+// ── platform events (Z5: moved from audit_logs to platform_audit_logs - tests/platformAudit.z5.test.js) ──
+test("Z4 platform-auth event types are now platform-store events; allow-listed fields only (no oid, issuer, email, token)", () => {
+  assert.ok(PLATFORM_EVENT_TYPES.includes("platform.authz.decision.v1") && PLATFORM_EVENT_TYPES.includes("platform.claim.decision.v1"));
+  const built = buildPlatformAuditRecord({
     tenantId: A, eventId: "ev-z4-1", correlationId: "c1",
-    data: { allowed: false, reason: "permission_missing", permission: "platform:cache:admin", principalId: "6a0000000000000000000a03", actorUserId: "u9", mode: "shadow", tokenRev: 2, currentRev: 2, oid: "aaaa", issuer: "https://x", email: "x@y", token: "eyJ" },
+    data: { allowed: false, reason: "permission_missing", permission: "platform:cache:admin", principalId: "6a0000000000000000000a03", actorUserId: "6a00000000000000000000c9", mode: "shadow", tokenRev: 2, currentRev: 2, oid: "aaaa", issuer: "https://x", email: "x@y", token: "eyJ" },
     metadata: { service: "user-service", auditContext: { actorScope: "platform", loginTenantId: A } },
-  }, "platform.authz.decision.v1", "user.events");
-  const r = lastInsert();
-  assert.deepStrictEqual([r.tenantId, r.actorScope, r.actorTenantId, r.targetTenantId, r.actorId], [A, "platform", null, null, "u9"]);
-  assert.deepStrictEqual(Object.keys(r.after).sort(), ["allowed", "currentRev", "mode", "permission", "reason", "tokenRev"]);
-  assert.ok(!/aaaa|https:\/\/x|x@y|eyJ/.test(JSON.stringify(r)));
+  }, "platform.authz.decision.v1");
+  assert.strictEqual(built.ok, true);
+  assert.deepStrictEqual([built.record.actorScope, built.record.actorTenantId, built.record.targetTenantId, built.record.actorId], ["platform", null, null, "6a0000000000000000000a03"]);
+  assert.ok(!("tenantId" in built.record));
+  assert.ok(!/aaaa|https:\/\/x|x@y|eyJ/.test(JSON.stringify(built.record)));
 });
 
 // ── migration is additive ─────────────────────────────────────────────────────

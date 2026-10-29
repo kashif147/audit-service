@@ -1,5 +1,5 @@
 /**
- * Run once to create the audit_logs table and its indexes.
+ * Run once to create the audit_logs / platform_audit_logs tables and their indexes.
  * Usage: npm run db:migrate
  */
 import "dotenv-flow/config";
@@ -59,6 +59,45 @@ const ACTOR_CONTEXT_COLUMNS = [
          CHECK (actor_scope IS NULL OR actor_scope IN ('tenant', 'platform', 'system'));
      END IF;
    END $$`,
+];
+
+// Phase B / Z5: platform_audit_logs - the authoritative store for platform / system security events
+// (src/rabbitMQ/platformAudit.js). Deliberately NO tenant_id: these rows belong to no customer tenant and
+// are never read by a tenant API (no route / controller queries this table; DB / ops access only in Z5).
+//   actor_scope      platform | system | tenant - "tenant" only for a TENANT actor denied a platform
+//                    operation (recorded truthfully, never relabelled platform); actor_tenant_id is set
+//                    exactly for that scope (who the tenant actor was - context, not ownership).
+//   target_tenant_id NULL for platform-wide actions; a real ProjectShell tenant id otherwise.
+// One index only: UNIQUE(event_id) - idempotent delivery (a redelivered / retried event can never create a
+// second row). No read path exists yet, so no query index. Reverse (manual, owner approval): rollback-z5.sql.
+const PLATFORM_AUDIT_TABLE = [
+  `CREATE TABLE IF NOT EXISTS platform_audit_logs (
+     id               BIGSERIAL   PRIMARY KEY,
+     event_id         TEXT        NOT NULL,
+     event_type       TEXT        NOT NULL,
+     service          TEXT        NOT NULL,
+     action           TEXT        NOT NULL,
+     actor_scope      TEXT        NOT NULL,
+     actor_id         TEXT        NOT NULL,
+     actor_tenant_id  TEXT,
+     target_tenant_id TEXT,
+     permission       TEXT,
+     allowed          BOOLEAN,
+     result           TEXT        NOT NULL,
+     reason           TEXT,
+     operation        TEXT,
+     correlation_id   TEXT,
+     metadata         JSONB       NOT NULL DEFAULT '{}'::jsonb,
+     occurred_at      TIMESTAMPTZ NOT NULL,
+     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     CONSTRAINT platform_audit_actor_scope_check  CHECK (actor_scope IN ('platform', 'system', 'tenant')),
+     CONSTRAINT platform_audit_actor_tenant_check CHECK ((actor_scope = 'tenant') = (actor_tenant_id IS NOT NULL)),
+     CONSTRAINT platform_audit_tenant_ids_check   CHECK (
+       (actor_tenant_id  IS NULL OR actor_tenant_id  ~ '^[0-9a-f]{24}$') AND
+       (target_tenant_id IS NULL OR target_tenant_id ~ '^[0-9a-f]{24}$')),
+     CONSTRAINT platform_audit_result_check       CHECK (result IN ('allowed', 'denied', 'success', 'failure'))
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS uniq_platform_audit_event_id ON platform_audit_logs (event_id)`,
 ];
 
 const DEDUPE_EVENT_ROWS = `
@@ -129,6 +168,11 @@ export async function runMigrations() {
     await query(stmt);
   }
   console.log("✓ Actor / target context columns present");
+
+  for (const stmt of PLATFORM_AUDIT_TABLE) {
+    await query(stmt);
+  }
+  console.log("✓ Table platform_audit_logs present");
 
   const dedupeResult = await query(DEDUPE_EVENT_ROWS);
   if (dedupeResult.rowCount) {

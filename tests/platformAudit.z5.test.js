@@ -61,8 +61,8 @@ const principalChange = (o = {}) => ({ actorId: PRINCIPAL_ADMIN_ACTOR, action: "
 test("event types: the Z4 platform-auth types plus tenant create / failure and principal changes", () => {
   assert.deepStrictEqual([...PLATFORM_EVENT_TYPES].sort(), [
     "platform.authz.decision.v1", "platform.claim.decision.v1", "platform.principal.changed.v1",
-    "platform.tenant.create.failed.v1", "platform.tenant.created.v1",
-  ]);
+    "platform.tenant.admin.changed.v1", "platform.tenant.create.failed.v1", "platform.tenant.created.v1",
+  ]); // + Z6 tenant-admin outcome (tests/platformAudit.z6.test.js)
   assert.ok(SYSTEM_ACTORS.includes("platform:principal-admin"));
 });
 
@@ -180,7 +180,7 @@ test("handler: a rejected event is logged and skipped - no write, no throw", asy
 
 // ── tenant lifecycle copy ────────────────────────────────────────────────────
 test("tenant-visible TENANT_CREATED copy: owned by the new tenant, platform / null / new, no platform detail", async () => {
-  assert.deepStrictEqual([...TENANT_LIFECYCLE_EVENT_TYPES], ["tenant.lifecycle.created.v1"]);
+  assert.deepStrictEqual([...TENANT_LIFECYCLE_EVENT_TYPES], ["tenant.lifecycle.created.v1", "tenant.lifecycle.changed.v1"]); // + Z6
   const payload = { tenantId: NEW, eventId: "ev-copy-1", correlationId: "corr-z5", timestamp: "2026-10-29T10:00:00.000Z", data: { tenantId: NEW }, metadata: { service: "user-service", auditContext: { actorScope: "platform", actorTenantId: null, targetTenantId: NEW } } };
   assert.strictEqual(await runTenantGatedHandler({ payload, messageContext: { headers: { "x-tenant-id": NEW } }, handler: handleTenantLifecycleEvent, eventType: "tenant.lifecycle.created.v1", exchange: "user.events", log }), true);
   const ins = calls.find((c) => /INSERT INTO audit_logs/.test(c.text));

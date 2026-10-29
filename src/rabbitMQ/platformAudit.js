@@ -15,6 +15,10 @@
 //                   authority): actor_id = the tenant user id, actor_tenant_id = its tenant (truthful
 //                   classification - the actor is not relabelled platform).
 //   system actor    reserved ids only (platform:principal-admin for the principal-admin script).
+// Z6: platform.tenant.admin.changed.v1 = the outcome (success / failure) of a cross-tenant tenant-administration
+// mutation by a platform principal; target = the tenant from the route, which must equal data.tenantId. Its
+// tenant-visible copy (only for approved lifecycle / configuration changes) is a separate event
+// (tenant.lifecycle.changed.v1, listeners/tenant.listener.js). Reads and denials are authz decisions only.
 // Historical boundary: Z4 wrote platform-auth rows 173-178 (DEV) into audit_logs under the sign-in tenant.
 // They stay exactly where they are; from the Z5 cutover every platform / system security event lands here.
 // Z4-shaped events (envelope tenant + platform context) still in flight are accepted and stored here too.
@@ -31,6 +35,7 @@ export const PLATFORM_AUDIT_EVENTS = Object.freeze({
   TENANT_CREATED: "platform.tenant.created.v1",
   TENANT_CREATE_FAILED: "platform.tenant.create.failed.v1",
   PRINCIPAL_CHANGED: "platform.principal.changed.v1",
+  TENANT_ADMIN_CHANGED: "platform.tenant.admin.changed.v1",
 });
 export const PLATFORM_EVENT_TYPES = Object.freeze(Object.values(PLATFORM_AUDIT_EVENTS));
 export const PRINCIPAL_ADMIN_ACTOR = "platform:principal-admin";
@@ -45,6 +50,7 @@ const SCOPES_FOR = {
   [E.TENANT_CREATED]: ["platform"],
   [E.TENANT_CREATE_FAILED]: ["platform"],
   [E.PRINCIPAL_CHANGED]: ["system"],
+  [E.TENANT_ADMIN_CHANGED]: ["platform"],
 };
 // Allow-listed data fields copied into metadata, per event type.
 const META_FIELDS = {
@@ -53,7 +59,24 @@ const META_FIELDS = {
   [E.TENANT_CREATED]: ["actorUserId"],
   [E.TENANT_CREATE_FAILED]: ["status", "actorUserId"],
   [E.PRINCIPAL_CHANGED]: ["principalId", "status", "revision", "permissionsAdded", "permissionsRemoved", "operatorLabel", "approvalRef"],
+  [E.TENANT_ADMIN_CHANGED]: ["status", "actorUserId", "section", "connectionId", "fromStatus", "toStatus"],
 };
+// Phase B / Z6: the outcome of a cross-tenant platform tenant-administration mutation. Each action names
+// the exact platform permission that authorizes it (one permission never implies another).
+export const TENANT_ADMIN_ACTIONS = Object.freeze({
+  TENANT_UPDATED: "platform:tenant:update:any",
+  TENANT_SUSPENDED: "platform:tenant:update:any",
+  TENANT_REACTIVATED: "platform:tenant:update:any",
+  TENANT_STATUS_CHANGED: "platform:tenant:update:any",
+  TENANT_DELETED: "platform:tenant:delete:any",
+  AUTH_CONNECTION_ADDED: "platform:tenant:auth-connections:manage:any",
+  AUTH_CONNECTION_UPDATED: "platform:tenant:auth-connections:manage:any",
+  AUTH_CONNECTION_REMOVED: "platform:tenant:auth-connections:manage:any",
+  AUTH_CONNECTION_CONNECT_STARTED: "platform:tenant:auth-connections:manage:any",
+  AUTH_CONNECTION_CONNECTED: "platform:tenant:auth-connections:manage:any",
+  AUTH_CONNECTION_TESTED: "platform:tenant:auth-connections:manage:any",
+  AUTH_CONNECTION_DISCONNECTED: "platform:tenant:auth-connections:manage:any",
+});
 const PRINCIPAL_ACTIONS = { create: "PLATFORM_PRINCIPAL_CREATE", disable: "PLATFORM_PRINCIPAL_DISABLE", enable: "PLATFORM_PRINCIPAL_ENABLE", "set-permissions": "PLATFORM_PRINCIPAL_SET_PERMISSIONS" };
 
 const present = (v) => v !== undefined && v !== null && v !== "";
@@ -178,6 +201,19 @@ export function buildPlatformAuditRecord(payload, eventType, { headerTenantId } 
     if (ctx.targetTenantId) return fail("failed_create_has_no_target");
     if (permission !== "platform:tenant:create") return fail("permission_required");
     return { ok: true, record: { ...base, action: "TENANT_CREATE_FAILED", actorId: pid, permission, allowed: true, result: "failure", reason, operation, metadata } };
+  }
+
+  if (eventType === E.TENANT_ADMIN_CHANGED) {
+    if (!pid) return fail("principal_id_required");
+    if (!ctx.targetTenantId) return fail("target_tenant_required");
+    if (data.tenantId !== ctx.targetTenantId) return fail("target_tenant_mismatch");
+    if (envelope) return fail("platform_record_has_no_owner");
+    const action = typeof data.action === "string" && Object.prototype.hasOwnProperty.call(TENANT_ADMIN_ACTIONS, data.action) ? data.action : null;
+    if (!action) return fail("unknown_tenant_admin_action");
+    if (permission !== TENANT_ADMIN_ACTIONS[action]) return fail("permission_action_mismatch");
+    if (data.result !== "success" && data.result !== "failure") return fail("result_required");
+    if (present(data.connectionId) && !(typeof data.connectionId === "string" && OBJECT_ID.test(data.connectionId))) return fail("invalid_connection_id");
+    return { ok: true, record: { ...base, action, actorId: pid, permission, allowed: true, result: data.result, reason, operation, metadata } };
   }
 
   // E.PRINCIPAL_CHANGED - the principal-admin script (reserved system actor).

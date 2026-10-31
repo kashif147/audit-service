@@ -12,6 +12,9 @@ import logger from "../../config/logger.js";
 //   tenant.lifecycle.changed.v1  (Z6) an approved cross-tenant change: data.action must be one of
 //                                TENANT_COPY_ACTIONS and data.tenantId the envelope tenant; anything else is
 //                                logged and skipped (never thrown - a throw republishes the message).
+//                                (Z9) action TENANT_ROLE_MIGRATED: the tenant's legacy SU -> ASU role migration
+//                                by the reserved SYSTEM actor (scripts/migrate-su-to-asu.js) - actor_scope
+//                                "system", counts / status / run id only (roleMigrationAfter).
 export const TENANT_LIFECYCLE_EVENT_TYPES = Object.freeze(["tenant.lifecycle.created.v1", "tenant.lifecycle.changed.v1"]);
 
 // action -> resource type. Reads, denials, connect-start, test and tenant delete are platform-only (no copy).
@@ -29,6 +32,26 @@ export const TENANT_COPY_ACTIONS = Object.freeze({
 const SECTIONS = new Set(["profile", "status", "organisation-profile", "branding", "branding-asset", "regional-settings", "auth-connections"]);
 const STATUSES = new Set(["ACTIVE", "INACTIVE", "SUSPENDED", "PENDING"]);
 const OBJECT_ID = /^[0-9a-f]{24}$/;
+
+// Phase B / Z9: the tenant role migration record. Exactly SU -> ASU; counts are small non-negative integers.
+export const ROLE_MIGRATION_ACTION = "TENANT_ROLE_MIGRATED";
+export const ROLE_MIGRATION_ACTOR = "platform:migration";
+const ROLE_MIGRATION_OUTCOMES = new Set(["migrated", "partial", "blocked", "error"]);
+const RUN_ID = /^z9-[0-9]{14}-[0-9a-f]{6}$/;
+const count = (v) => (Number.isInteger(v) && v >= 0 && v <= 1000000 ? v : null);
+
+/** null when the record is not an exact, well-formed SU -> ASU migration (then it is rejected). */
+export function roleMigrationAfter(data) {
+  if (data.actorId !== ROLE_MIGRATION_ACTOR || data.fromRole !== "SU" || data.toRole !== "ASU") return null;
+  if (!ROLE_MIGRATION_OUTCOMES.has(data.outcome) || typeof data.runId !== "string" || !RUN_ID.test(data.runId)) return null;
+  const after = { fromRole: "SU", toRole: "ASU", outcome: data.outcome, runId: data.runId };
+  for (const k of ["affectedUsers", "affectedConnections", "permissionsAdded", "suRolesRetired"]) {
+    const c = count(data[k]);
+    if (c === null) return null;
+    after[k] = c;
+  }
+  return after;
+}
 
 // The allow-listed, safe "after" of a change copy: section, status values, connection id. Never a body field.
 function changeAfter(data) {
@@ -64,6 +87,32 @@ export async function handleTenantLifecycleEvent(payload, eventType, exchange) {
   }
 
   const data = payload.data && typeof payload.data === "object" ? payload.data : {};
+  if (data.action === ROLE_MIGRATION_ACTION) {
+    const after = roleMigrationAfter(data);
+    if (!after || data.tenantId !== payload.tenantId) {
+      logger.warn({ eventType, eventId: payload.eventId, reason: after ? "tenant_mismatch" : "malformed_role_migration" }, "TenantLifecycleCopyRejected");
+      return;
+    }
+    await createAuditLog({
+      tenantId:      payload.tenantId,
+      eventType,
+      exchange,
+      service:       "user-service",
+      action:        ROLE_MIGRATION_ACTION,
+      resourceType:  "role",
+      resourceId:    payload.tenantId,
+      actorId:       ROLE_MIGRATION_ACTOR,
+      actorEmail:    null,
+      correlationId: payload.correlationId,
+      eventId:       payload.eventId,
+      after,
+      auditContext:  { actorScope: "system", actorTenantId: null, targetTenantId: payload.tenantId },
+      metadata:      { service: "user-service", migration: "z9-su-to-asu" },
+      occurredAt:    new Date(payload.timestamp || Date.now()),
+    });
+    logger.debug({ eventType }, "Tenant role migration audited");
+    return;
+  }
   const resourceType = typeof data.action === "string" && Object.prototype.hasOwnProperty.call(TENANT_COPY_ACTIONS, data.action)
     ? TENANT_COPY_ACTIONS[data.action] : null;
   if (!resourceType || data.tenantId !== payload.tenantId) {

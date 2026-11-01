@@ -42,6 +42,9 @@ export const PLATFORM_AUDIT_EVENTS = Object.freeze({
   // Phase B / P1: provisioning control plane
   PROVISIONING_RUN_CHANGED: "platform.provisioning.run.changed.v1",
   PROVISIONING_TEMPLATE_PUBLISHED: "platform.provisioning.template.published.v1",
+  // Phase B / P3 prerequisite: a provisioning STEP transition recorded by the orchestrator (system actor) for ONE
+  // verified target tenant - the only system event allowed to carry a target tenant.
+  PROVISIONING_STEP_CHANGED: "platform.provisioning.step.changed.v1",
 });
 export const PLATFORM_EVENT_TYPES = Object.freeze(Object.values(PLATFORM_AUDIT_EVENTS));
 export const PRINCIPAL_ADMIN_ACTOR = "platform:principal-admin";
@@ -59,7 +62,11 @@ const SCOPES_FOR = {
   [E.TENANT_ADMIN_CHANGED]: ["platform"],
   [E.PROVISIONING_RUN_CHANGED]: ["platform"],
   [E.PROVISIONING_TEMPLATE_PUBLISHED]: ["system"],
+  [E.PROVISIONING_STEP_CHANGED]: ["system"],
 };
+// The narrow exception to "a system actor carries no tenant context": these event types REQUIRE a target tenant
+// (and only their reserved actor may emit them). Every other system event keeps refusing a target.
+const SYSTEM_TARGET_EVENTS = Object.freeze({ [E.PROVISIONING_STEP_CHANGED]: "platform:provisioning" });
 // Allow-listed data fields copied into metadata, per event type.
 const META_FIELDS = {
   [E.CLAIM_DECISION]: ["mode", "currentRev", "permissionCount", "mfa", "actorUserId"],
@@ -70,7 +77,10 @@ const META_FIELDS = {
   [E.TENANT_ADMIN_CHANGED]: ["status", "actorUserId", "section", "connectionId", "fromStatus", "toStatus"],
   [E.PROVISIONING_RUN_CHANGED]: ["actorUserId", "runId", "templateKey", "templateVersion", "runStatus", "attempt", "stepCount", "stepsSucceeded", "insertedCount", "skippedCount"],
   [E.PROVISIONING_TEMPLATE_PUBLISHED]: ["templateKey", "templateVersion", "contentHash", "componentCount", "operatorLabel", "approvalRef"],
+  [E.PROVISIONING_STEP_CHANGED]: ["runId", "stepKey", "component", "manifestVersion", "attempt", "stepStatus", "runStatus", "insertedCount", "skippedCount", "failureCode"],
 };
+export const PROVISIONING_STEP_ACTIONS = Object.freeze(["PROVISIONING_STEP_REQUESTED", "PROVISIONING_STEP_SUCCEEDED", "PROVISIONING_STEP_FAILED", "PROVISIONING_STEP_RESULT_REFUSED"]);
+const STEP_KEY_V2 = /^psk2:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[a-z0-9-]+:[a-z0-9-]+:[a-z0-9-]+$/;
 // Phase B / P1: provisioning-run actions by a platform principal (permission platform:provisioning:admin). A refusal
 // may have no target (the request named no existing tenant); every other action targets the run's tenant.
 export const PROVISIONING_RUN_ACTIONS = Object.freeze(["PROVISIONING_RUN_CREATED", "PROVISIONING_RUN_REQUESTED_EXISTING", "PROVISIONING_RUN_RESUMED", "PROVISIONING_RUN_REFUSED"]);
@@ -133,7 +143,14 @@ function resolveContext(eventType, ctx) {
     return { ok: true, actorScope, actorTenantId, targetTenantId: present(targetTenantId) ? targetTenantId : null, loginTenantId: null };
   }
   if (present(actorTenantId)) return fail("non_tenant_actor_has_actor_tenant");
-  if (actorScope === "system" && (present(loginTenantId) || present(targetTenantId))) return fail("system_actor_tenant_context");
+  if (actorScope === "system") {
+    if (present(loginTenantId)) return fail("system_actor_tenant_context");
+    if (Object.prototype.hasOwnProperty.call(SYSTEM_TARGET_EVENTS, eventType)) {
+      if (!present(targetTenantId)) return fail("system_actor_requires_target");
+    } else if (present(targetTenantId)) {
+      return fail("system_actor_tenant_context");
+    }
+  }
   return {
     ok: true,
     actorScope,
@@ -248,6 +265,17 @@ export function buildPlatformAuditRecord(payload, eventType, { headerTenantId } 
     }
     if (present(data.runId) && !(typeof data.runId === "string" && UUID.test(data.runId))) return fail("invalid_run_id");
     return { ok: true, record: { ...base, action, actorId: pid, permission, allowed: true, result: data.result, reason, operation, metadata } };
+  }
+
+  if (eventType === E.PROVISIONING_STEP_CHANGED) {
+    if (data.actorId !== SYSTEM_TARGET_EVENTS[eventType] || !SYSTEM_ACTORS.includes(data.actorId)) return fail("unknown_system_actor");
+    if (envelope) return fail("platform_record_has_no_owner");
+    if (data.tenantId !== ctx.targetTenantId) return fail("target_tenant_mismatch");
+    if (!PROVISIONING_STEP_ACTIONS.includes(data.action)) return fail("unknown_provisioning_step_action");
+    if (data.result !== "success" && data.result !== "failure") return fail("result_required");
+    if (!(typeof data.runId === "string" && UUID.test(data.runId))) return fail("invalid_run_id");
+    if (!(typeof data.stepKey === "string" && STEP_KEY_V2.test(data.stepKey) && data.stepKey.startsWith(`psk2:${data.runId}:`))) return fail("invalid_step_key");
+    return { ok: true, record: { ...base, action: data.action, actorId: data.actorId, permission: null, allowed: null, result: data.result, reason, operation: "provisioning-orchestrator", metadata } };
   }
 
   if (eventType === E.PROVISIONING_TEMPLATE_PUBLISHED) {

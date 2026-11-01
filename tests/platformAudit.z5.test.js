@@ -61,8 +61,9 @@ const principalChange = (o = {}) => ({ actorId: PRINCIPAL_ADMIN_ACTOR, action: "
 test("event types: the Z4 platform-auth types plus tenant create / failure and principal changes", () => {
   assert.deepStrictEqual([...PLATFORM_EVENT_TYPES].sort(), [
     "platform.authz.decision.v1", "platform.claim.decision.v1", "platform.principal.changed.v1",
+    "platform.provisioning.run.changed.v1", "platform.provisioning.template.published.v1",
     "platform.tenant.admin.changed.v1", "platform.tenant.create.failed.v1", "platform.tenant.created.v1",
-  ]); // + Z6 tenant-admin outcome (tests/platformAudit.z6.test.js)
+  ]); // + Z6 tenant-admin outcome (tests/platformAudit.z6.test.js), P1 provisioning (tests/platformAudit.p1.test.js)
   assert.ok(SYSTEM_ACTORS.includes("platform:principal-admin"));
 });
 

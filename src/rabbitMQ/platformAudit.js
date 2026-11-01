@@ -14,7 +14,10 @@
 //   tenant actor    only a DENIED platform authorization (legacy SU "*", ASU, ordinary users have no platform
 //                   authority): actor_id = the tenant user id, actor_tenant_id = its tenant (truthful
 //                   classification - the actor is not relabelled platform).
-//   system actor    reserved ids only (platform:principal-admin for the principal-admin script).
+//   system actor    reserved ids only (platform:principal-admin for the principal-admin script; P1:
+//                   platform:provisioning for the platform-template publish script).
+// P1: platform.provisioning.run.changed.v1 = a provisioning-run action by a platform principal holding
+// platform:provisioning:admin (target = the run's tenant; a refusal may have none). Ids, statuses, counts only.
 // Z6: platform.tenant.admin.changed.v1 = the outcome (success / failure) of a cross-tenant tenant-administration
 // mutation by a platform principal; target = the tenant from the route, which must equal data.tenantId. Its
 // tenant-visible copy (only for approved lifecycle / configuration changes) is a separate event
@@ -36,6 +39,9 @@ export const PLATFORM_AUDIT_EVENTS = Object.freeze({
   TENANT_CREATE_FAILED: "platform.tenant.create.failed.v1",
   PRINCIPAL_CHANGED: "platform.principal.changed.v1",
   TENANT_ADMIN_CHANGED: "platform.tenant.admin.changed.v1",
+  // Phase B / P1: provisioning control plane
+  PROVISIONING_RUN_CHANGED: "platform.provisioning.run.changed.v1",
+  PROVISIONING_TEMPLATE_PUBLISHED: "platform.provisioning.template.published.v1",
 });
 export const PLATFORM_EVENT_TYPES = Object.freeze(Object.values(PLATFORM_AUDIT_EVENTS));
 export const PRINCIPAL_ADMIN_ACTOR = "platform:principal-admin";
@@ -51,6 +57,8 @@ const SCOPES_FOR = {
   [E.TENANT_CREATE_FAILED]: ["platform"],
   [E.PRINCIPAL_CHANGED]: ["system"],
   [E.TENANT_ADMIN_CHANGED]: ["platform"],
+  [E.PROVISIONING_RUN_CHANGED]: ["platform"],
+  [E.PROVISIONING_TEMPLATE_PUBLISHED]: ["system"],
 };
 // Allow-listed data fields copied into metadata, per event type.
 const META_FIELDS = {
@@ -60,7 +68,17 @@ const META_FIELDS = {
   [E.TENANT_CREATE_FAILED]: ["status", "actorUserId"],
   [E.PRINCIPAL_CHANGED]: ["principalId", "status", "revision", "permissionsAdded", "permissionsRemoved", "operatorLabel", "approvalRef"],
   [E.TENANT_ADMIN_CHANGED]: ["status", "actorUserId", "section", "connectionId", "fromStatus", "toStatus"],
+  [E.PROVISIONING_RUN_CHANGED]: ["actorUserId", "runId", "templateKey", "templateVersion", "runStatus", "attempt", "stepCount", "stepsSucceeded", "insertedCount", "skippedCount"],
+  [E.PROVISIONING_TEMPLATE_PUBLISHED]: ["templateKey", "templateVersion", "contentHash", "componentCount", "operatorLabel", "approvalRef"],
 };
+// Phase B / P1: provisioning-run actions by a platform principal (permission platform:provisioning:admin). A refusal
+// may have no target (the request named no existing tenant); every other action targets the run's tenant.
+export const PROVISIONING_RUN_ACTIONS = Object.freeze(["PROVISIONING_RUN_CREATED", "PROVISIONING_RUN_REQUESTED_EXISTING", "PROVISIONING_RUN_RESUMED", "PROVISIONING_RUN_REFUSED"]);
+const PROVISIONING_PERMISSION = "platform:provisioning:admin";
+export const PROVISIONING_ACTOR = "platform:provisioning";
+const TEMPLATE_ACTIONS = ["PLATFORM_TEMPLATE_PUBLISHED", "PLATFORM_TEMPLATE_RETIRED"];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const SHA256 = /^[0-9a-f]{64}$/;
 // Phase B / Z6: the outcome of a cross-tenant platform tenant-administration mutation. Each action names
 // the exact platform permission that authorizes it (one permission never implies another).
 export const TENANT_ADMIN_ACTIONS = Object.freeze({
@@ -214,6 +232,32 @@ export function buildPlatformAuditRecord(payload, eventType, { headerTenantId } 
     if (data.result !== "success" && data.result !== "failure") return fail("result_required");
     if (present(data.connectionId) && !(typeof data.connectionId === "string" && OBJECT_ID.test(data.connectionId))) return fail("invalid_connection_id");
     return { ok: true, record: { ...base, action, actorId: pid, permission, allowed: true, result: data.result, reason, operation, metadata } };
+  }
+
+  if (eventType === E.PROVISIONING_RUN_CHANGED) {
+    if (!pid) return fail("principal_id_required");
+    if (envelope) return fail("platform_record_has_no_owner");
+    if (permission !== PROVISIONING_PERMISSION) return fail("permission_required");
+    const action = PROVISIONING_RUN_ACTIONS.includes(data.action) ? data.action : null;
+    if (!action) return fail("unknown_provisioning_action");
+    if (data.result !== "success" && data.result !== "failure") return fail("result_required");
+    if (ctx.targetTenantId) {
+      if (data.tenantId !== ctx.targetTenantId) return fail("target_tenant_mismatch");
+    } else if (action !== "PROVISIONING_RUN_REFUSED" || present(data.tenantId)) {
+      return fail("target_tenant_required");
+    }
+    if (present(data.runId) && !(typeof data.runId === "string" && UUID.test(data.runId))) return fail("invalid_run_id");
+    return { ok: true, record: { ...base, action, actorId: pid, permission, allowed: true, result: data.result, reason, operation, metadata } };
+  }
+
+  if (eventType === E.PROVISIONING_TEMPLATE_PUBLISHED) {
+    if (data.actorId !== PROVISIONING_ACTOR || !SYSTEM_ACTORS.includes(data.actorId)) return fail("unknown_system_actor");
+    if (!TEMPLATE_ACTIONS.includes(data.action)) return fail("unknown_template_action");
+    if (data.result !== "success" && data.result !== "failure") return fail("result_required");
+    if (!safeText(data.templateKey, 64) || !Number.isInteger(data.templateVersion)) return fail("template_required");
+    if (present(data.contentHash) && !(typeof data.contentHash === "string" && SHA256.test(data.contentHash))) return fail("invalid_content_hash");
+    if (!safeText(data.operatorLabel, 120) || !safeText(data.approvalRef, 120)) return fail("operator_metadata_required");
+    return { ok: true, record: { ...base, action: data.action, actorId: PROVISIONING_ACTOR, permission: null, allowed: null, result: data.result, reason, operation: `platform-template ${data.action === "PLATFORM_TEMPLATE_RETIRED" ? "retire" : "publish"}`, metadata } };
   }
 
   // E.PRINCIPAL_CHANGED - the principal-admin script (reserved system actor).

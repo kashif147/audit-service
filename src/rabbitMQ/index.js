@@ -13,8 +13,39 @@ import { handleBatchEvent }        from "./listeners/batch.listener.js";
 import { handleJournalEvent }      from "./listeners/journal.listener.js";
 import { handleProfileEvent }      from "./listeners/profile.listener.js";
 import { handleFinanceEvent }      from "./listeners/finance.listener.js";
-import { handleEventsEvent }       from "./listeners/events.listener.js";
+import { handleEventsEvent, DURABLE_EVENTS_KEYS } from "./listeners/events.listener.js";
 import { handleIssueAuditEvent }   from "./listeners/issues.listener.js";
+
+/**
+ * Per-routing-key audit handler (registered by setupQueue).
+ *
+ * Phase A / A1: an audit row is tenant-owned. The gate resolves the event tenant before any write and
+ * rejects (log + skip, no throw - see eventTenant.js) when it is missing, malformed or inconsistent. A
+ * placeholder tenant such as "unknown" is never persisted.
+ *
+ * P5: `rethrow` keys belong to producers that rely on durable delivery (events-service's transactional
+ * outbox, confirmed publish). For those a write failure is rethrown so the consumer retries /
+ * dead-letters the message instead of acking it away. Every other key keeps log-and-skip: a throw makes
+ * rabbitmq-middleware republish to the original exchange/routing key, re-delivering to every queue bound
+ * to that key - acceptable only for keys no other queue binds (true for the three P5 keys).
+ */
+export function buildAuditKeyHandler({ key, exchange: boundExchange, handler, rethrow = false }) {
+  return async (payload, messageContext) => {
+    try {
+      await runTenantGatedHandler({
+        payload,
+        messageContext,
+        handler,
+        eventType: key,
+        exchange: boundExchange,
+        log: logger,
+      });
+    } catch (err) {
+      logger.error({ eventType: key, error: err.message }, "Audit handler error");
+      if (rethrow) throw err;
+    }
+  };
+}
 
 // ── Queues ────────────────────────────────────────────────────────────────────
 const QUEUES = {
@@ -59,7 +90,7 @@ export async function setupConsumers() {
    * @param {{ exchange: string, routingKeys: string[] }[]} bindings
    * @param {(payload: object, eventType: string, exchange: string) => Promise<void>} handler
    */
-  async function setupQueue(queueName, bindings, handler) {
+  async function setupQueue(queueName, bindings, handler, { rethrowKeys = new Set() } = {}) {
     try {
       if (!bindings?.length) throw new Error("bindings required");
 
@@ -80,23 +111,10 @@ export async function setupConsumers() {
       const allKeys = [...routingKeyExchange.keys()];
       for (const key of allKeys) {
         const boundExchange = routingKeyExchange.get(key);
-        consumer.registerHandler(key, async (payload, messageContext) => {
-          // Phase A / A1: an audit row is tenant-owned. The gate resolves the event tenant before any
-          // write and rejects (log + skip, no throw - see eventTenant.js) when it is missing, malformed
-          // or inconsistent. A placeholder tenant such as "unknown" is never persisted.
-          try {
-            await runTenantGatedHandler({
-              payload,
-              messageContext,
-              handler,
-              eventType: key,
-              exchange: boundExchange,
-              log: logger,
-            });
-          } catch (err) {
-            logger.error({ eventType: key, error: err.message }, "Audit handler error");
-          }
-        });
+        consumer.registerHandler(
+          key,
+          buildAuditKeyHandler({ key, exchange: boundExchange, handler, rethrow: rethrowKeys.has(key) }),
+        );
       }
 
       await consumer.consume(queueName, { prefetch: 10 });
@@ -224,9 +242,11 @@ export async function setupConsumers() {
         "events.registration.confirmed.v1",
         "events.registration.cancelled.v1",
         "events.certificate.issued.v1",
+        // P5 attendance audit (events-service transactional outbox, confirmed publish):
+        ...DURABLE_EVENTS_KEYS,
       ],
     },
-  ], handleEventsEvent);
+  ], handleEventsEvent, { rethrowKeys: new Set(DURABLE_EVENTS_KEYS) });
 
   // ── issues.events (published by issue-service) ──────────────────────────────
   await setupQueue(QUEUES.issues, [

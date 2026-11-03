@@ -300,13 +300,20 @@ export async function setupConsumers() {
   // republishes from an in-memory timer on failure (a crash in the delay loses the event). No new exchange
   // or routing key: the keys are already published on events.events; only a queue binding is added.
   try {
-    await consumer.createQueue(QUEUES.attendance, { durable: true }); // DLX dlx -> audit.events.attendance.dlq; no TTL
-    await assertExchangeBindable("events.events");
-    await consumer.bindQueue(QUEUES.attendance, "events.events", [...DURABLE_EVENTS_KEYS]);
+    // Idempotent queue/DLX/binding assertion; re-run before every resubscribe (P5) so a broker that lost
+    // its definitions gets them back instead of failing consume with 404.
+    const assertAttendanceTopology = async () => {
+      await consumer.createQueue(QUEUES.attendance, { durable: true }); // DLX dlx -> audit.events.attendance.dlq; no TTL
+      await assertExchangeBindable("events.events");
+      await consumer.bindQueue(QUEUES.attendance, "events.events", [...DURABLE_EVENTS_KEYS]);
+    };
+    await assertAttendanceTopology();
     const handlers = Object.fromEntries(
       DURABLE_EVENTS_KEYS.map((key) => [key, buildDurableAuditHandler({ key, exchange: "events.events", handler: handleEventsEvent })]),
     );
-    durableConsumer = await startExplicitAckConsumer({ connectionManager, queueName: QUEUES.attendance, handlers, logger });
+    // P5: resubscribes after a broker/channel drop (the shared middleware reconnects its connection but never
+    // re-registers consumers).
+    durableConsumer = await startExplicitAckConsumer({ connectionManager, queueName: QUEUES.attendance, handlers, logger, ensureTopology: assertAttendanceTopology });
     logger.info({ queue: QUEUES.attendance, keys: DURABLE_EVENTS_KEYS }, "Durable explicit-ack consumer ready");
   } catch (err) {
     logger.error({ queue: QUEUES.attendance, error: err.message }, "Failed to set up durable explicit-ack consumer");
@@ -322,6 +329,9 @@ export async function setupConsumers() {
 
   logger.info("All audit consumers ready");
 }
+
+// Test-only accessor for the live durable consumer handle (real-broker resubscribe test).
+export const __durableConsumerForTests = () => durableConsumer;
 
 export async function shutdownEventSystem() {
   try {

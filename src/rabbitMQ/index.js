@@ -1,9 +1,10 @@
-import { init, consumer, shutdown } from "@projectShell/rabbitmq-middleware";
+import { init, consumer, shutdown, connectionManager } from "@projectShell/rabbitmq-middleware";
 import logger from "../config/logger.js";
 import bizLogger from "../config/bizLogger.js";
 import { createRabbitStructuredLogHandlers } from "@projectShell/logging-lib";
 import { assertExchangeBindable } from "./exchangeGuard.js";
 import { runTenantGatedHandler } from "./eventTenant.js";
+import { startExplicitAckConsumer, permanentError } from "./explicitAckConsumer.js";
 
 import { handleUserEvent }         from "./listeners/user.listener.js";
 import { handleApplicationEvent }  from "./listeners/application.listener.js";
@@ -25,13 +26,11 @@ import { runPlatformAuditHandler, PLATFORM_EVENT_TYPES } from "./platformAudit.j
  * rejects (log + skip, no throw - see eventTenant.js) when it is missing, malformed or inconsistent. A
  * placeholder tenant such as "unknown" is never persisted.
  *
- * P5: `rethrow` keys belong to producers that rely on durable delivery (events-service's transactional
- * outbox, confirmed publish). For those a write failure is rethrown so the consumer retries /
- * dead-letters the message instead of acking it away. Every other key keeps log-and-skip: a throw makes
- * rabbitmq-middleware republish to the original exchange/routing key, re-delivering to every queue bound
- * to that key - acceptable only for keys no other queue binds (true for the three P5 keys).
+ * Shared-consumer keys are log-and-skip (never thrown): a throw makes rabbitmq-middleware ack and
+ * republish from an in-memory timer. Keys that need durable delivery do not use this path - see
+ * buildDurableAuditHandler + the explicit-ack queue (P5).
  */
-export function buildAuditKeyHandler({ key, exchange: boundExchange, handler, platform = false, rethrow = false }) {
+export function buildAuditKeyHandler({ key, exchange: boundExchange, handler, platform = false }) {
   return async (payload, messageContext) => {
     try {
       if (platform) {
@@ -48,10 +47,33 @@ export function buildAuditKeyHandler({ key, exchange: boundExchange, handler, pl
       });
     } catch (err) {
       logger.error({ eventType: key, error: err.message }, "Audit handler error");
-      if (rethrow) throw err;
     }
   };
 }
+
+/**
+ * P5 durable audit handler (explicit-ack queue only). Resolves ONLY when the row is committed or already
+ * exists (createAuditLog dedupes on tenant_id + event_id). A message that can never be stored - no eventId
+ * (could not be deduplicated), tenant/context rejected - throws a *permanent* error: the adapter
+ * dead-letters it at once (kept for inspection, never acked away, never retried). Any other error (e.g.
+ * Postgres unavailable) throws a transient error: one broker redelivery, then the DLQ.
+ */
+const PERMANENT_WRITE_CODES = new Set(["AUDIT_TENANT_REQUIRED", "AUDIT_CONTEXT_INVALID"]);
+export function buildDurableAuditHandler({ key, exchange, handler }) {
+  return async (payload, messageContext) => {
+    if (!payload?.eventId) throw permanentError("durable audit event without eventId", "AUDIT_EVENT_ID_REQUIRED");
+    let ran;
+    try {
+      ran = await runTenantGatedHandler({ payload, messageContext, handler, eventType: key, exchange, log: logger });
+    } catch (err) {
+      if (PERMANENT_WRITE_CODES.has(err?.code)) throw permanentError(err.message, err.code);
+      throw err;
+    }
+    if (!ran) throw permanentError("durable audit event rejected by the tenant/context gate", "AUDIT_EVENT_REJECTED");
+  };
+}
+
+let durableConsumer = null;
 
 // ── Queues ────────────────────────────────────────────────────────────────────
 const QUEUES = {
@@ -64,6 +86,8 @@ const QUEUES = {
   profile:     "audit.profile.events",
   finance:     "audit.finance.events",
   events:      "audit.events.events",
+  // P5: the three durable attendance-audit keys, on their own queue with an explicit-ack consumer.
+  attendance:  "audit.events.attendance",
   issues:      "audit.issues.events",
   platform:    "audit.platform.events",
   tenant:      "audit.tenant.events",
@@ -101,7 +125,7 @@ export async function setupConsumers() {
    *   platform / system security events go through the platform gate into platform_audit_logs, never the
    *   tenant gate / audit_logs (see platformAudit.js). Every other queue is tenant-gated (A1).
    */
-  async function setupQueue(queueName, bindings, handler, { platform = false, rethrowKeys = new Set() } = {}) {
+  async function setupQueue(queueName, bindings, handler, { platform = false } = {}) {
     try {
       if (!bindings?.length) throw new Error("bindings required");
 
@@ -124,7 +148,7 @@ export async function setupConsumers() {
         const boundExchange = routingKeyExchange.get(key);
         consumer.registerHandler(
           key,
-          buildAuditKeyHandler({ key, exchange: boundExchange, handler, platform, rethrow: rethrowKeys.has(key) }),
+          buildAuditKeyHandler({ key, exchange: boundExchange, handler, platform }),
         );
       }
 
@@ -267,11 +291,26 @@ export async function setupConsumers() {
         "events.registration.confirmed.v1",
         "events.registration.cancelled.v1",
         "events.certificate.issued.v1",
-        // P5 attendance audit (events-service transactional outbox, confirmed publish):
-        ...DURABLE_EVENTS_KEYS,
       ],
     },
-  ], handleEventsEvent, { rethrowKeys: new Set(DURABLE_EVENTS_KEYS) });
+  ], handleEventsEvent);
+
+  // ── events.events P5 durable attendance audit keys (explicit ack, dedicated queue + channel) ───────
+  // Not on audit.events.events: that queue is consumed by the shared middleware consumer, which acks and
+  // republishes from an in-memory timer on failure (a crash in the delay loses the event). No new exchange
+  // or routing key: the keys are already published on events.events; only a queue binding is added.
+  try {
+    await consumer.createQueue(QUEUES.attendance, { durable: true }); // DLX dlx -> audit.events.attendance.dlq; no TTL
+    await assertExchangeBindable("events.events");
+    await consumer.bindQueue(QUEUES.attendance, "events.events", [...DURABLE_EVENTS_KEYS]);
+    const handlers = Object.fromEntries(
+      DURABLE_EVENTS_KEYS.map((key) => [key, buildDurableAuditHandler({ key, exchange: "events.events", handler: handleEventsEvent })]),
+    );
+    durableConsumer = await startExplicitAckConsumer({ connectionManager, queueName: QUEUES.attendance, handlers, logger });
+    logger.info({ queue: QUEUES.attendance, keys: DURABLE_EVENTS_KEYS }, "Durable explicit-ack consumer ready");
+  } catch (err) {
+    logger.error({ queue: QUEUES.attendance, error: err.message }, "Failed to set up durable explicit-ack consumer");
+  }
 
   // ── issues.events (published by issue-service) ──────────────────────────────
   await setupQueue(QUEUES.issues, [
@@ -286,6 +325,10 @@ export async function setupConsumers() {
 
 export async function shutdownEventSystem() {
   try {
+    if (durableConsumer) {
+      await durableConsumer.stop(); // unacked deliveries return to the broker
+      durableConsumer = null;
+    }
     await shutdown();
     logger.info("Audit-service RabbitMQ shutdown complete");
   } catch (err) {

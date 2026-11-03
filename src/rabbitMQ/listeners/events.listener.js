@@ -14,7 +14,7 @@ const ACTION_MAP = {
   "events.certificate.review_flagged.v1": "EVENT_CERTIFICATE_REVIEW_FLAGGED",
 };
 
-/** Keys whose delivery must be durable (rethrown on write failure - see rabbitMQ/index.js). */
+/** Keys whose delivery must be durable: consumed from their own queue by the explicit-ack adapter (see rabbitMQ/index.js buildDurableAuditHandler). */
 export const DURABLE_EVENTS_KEYS = Object.freeze([
   "events.attendance.corrected.v1",
   "events.session.schedule_changed.v1",

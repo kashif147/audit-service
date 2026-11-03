@@ -2,9 +2,12 @@
 // Native node:test (ESM). Run: node --test --experimental-test-module-mocks tests/eventsAttendanceAudit.p5.test.js
 //   - the three keys are bound on events.events and mapped (action, resource, actor, before/after);
 //   - idempotent: a re-published / redelivered message (same eventId) stores ONE row;
-//   - a write failure on these keys is rethrown (consumer retries / dead-letters it, never acked away);
-//     other keys keep log-and-skip; a tenant-gate rejection is a permanent skip, never a throw;
-//   - a durable-key message without an eventId is skipped (could not be deduplicated).
+//   - the keys live on their own queue (audit.events.attendance) with an explicit-ack consumer, NOT on
+//     the shared audit.events.events queue;
+//   - the durable handler resolves only when the row is committed/deduped; a write failure throws a
+//     transient error (adapter: one broker redelivery, then DLQ); an un-storable message (no eventId,
+//     tenant/context rejected) throws a PERMANENT error (adapter: dead-letter at once) - never acked away;
+//   - other keys keep log-and-skip on the shared consumer (unchanged).
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -42,7 +45,7 @@ mock.module(new URL("../src/config/db.js", import.meta.url).href, {
 });
 
 const { handleEventsEvent, DURABLE_EVENTS_KEYS } = await import("../src/rabbitMQ/listeners/events.listener.js");
-const { buildAuditKeyHandler } = await import("../src/rabbitMQ/index.js");
+const { buildAuditKeyHandler, buildDurableAuditHandler } = await import("../src/rabbitMQ/index.js");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const T = "68cbf7806080b4621d469d34";
@@ -57,14 +60,20 @@ beforeEach(() => {
   failNextInsert = false;
 });
 
-test("the three keys are bound on events.events and registered as durable (rethrow)", () => {
+test("the three keys are bound on events.events to their own explicit-ack queue, not the shared one", () => {
   const src = fs.readFileSync(path.join(__dirname, "..", "src", "rabbitMQ", "index.js"), "utf8");
   assert.deepStrictEqual([...DURABLE_EVENTS_KEYS].sort(), [
     "events.attendance.corrected.v1",
     "events.certificate.review_flagged.v1",
     "events.session.schedule_changed.v1",
   ]);
-  assert.match(src, /exchange: "events\.events"[\s\S]*\.\.\.DURABLE_EVENTS_KEYS[\s\S]*handleEventsEvent, \{ rethrowKeys: new Set\(DURABLE_EVENTS_KEYS\) \}/);
+  assert.match(src, /attendance:\s+"audit\.events\.attendance"/);
+  assert.match(src, /bindQueue\(QUEUES\.attendance, "events\.events", \[\.\.\.DURABLE_EVENTS_KEYS\]\)/);
+  assert.match(src, /startExplicitAckConsumer\(\{ connectionManager, queueName: QUEUES\.attendance/);
+  // The shared audit.events.events binding must not carry the durable keys (shared consumer acks+republishes).
+  const shared = src.slice(src.indexOf("await setupQueue(QUEUES.events"), src.indexOf("], handleEventsEvent);"));
+  assert.ok(shared.length > 0 && !/DURABLE_EVENTS_KEYS/.test(shared));
+  assert.doesNotMatch(src, /rethrowKeys|rethrow:/);
 });
 
 test("attendance correction: action, registration resource, actor, before = previous entry", async () => {
@@ -107,18 +116,19 @@ test("idempotent: the same eventId delivered three times (lost confirm / redeliv
   assert.equal(rows.length, 1);
 });
 
-test("durable key without an eventId is skipped (never stored un-deduplicable)", async () => {
+test("durable key without an eventId: PERMANENT error (dead-lettered, never acked away, never stored)", async () => {
+  const h = buildDurableAuditHandler({ key: "events.attendance.corrected.v1", exchange: "events.events", handler: handleEventsEvent });
   const msg = envelope("events.attendance.corrected.v1", { registrationId: "reg-1" });
   delete msg.eventId;
-  await handleEventsEvent(msg, "events.attendance.corrected.v1", "events.events");
+  await assert.rejects(() => h(msg, { headers: {} }), (e) => e.permanent === true && e.code === "AUDIT_EVENT_ID_REQUIRED");
   assert.equal(rows.length, 0);
 });
 
-test("write failure on a durable key is RETHROWN (retry / dead-letter), then the retry stores exactly one row", async () => {
-  const h = buildAuditKeyHandler({ key: "events.attendance.corrected.v1", exchange: "events.events", handler: handleEventsEvent, rethrow: true });
+test("write failure on a durable key is a TRANSIENT throw (broker redelivery), then the retry stores exactly one row", async () => {
+  const h = buildDurableAuditHandler({ key: "events.attendance.corrected.v1", exchange: "events.events", handler: handleEventsEvent });
   const msg = envelope("events.attendance.corrected.v1", { registrationId: "reg-1", sessionId: "ses-1", actorUserId: "crm-1" });
   failNextInsert = true;
-  await assert.rejects(() => h(msg, { headers: { "x-tenant-id": T } }), /connection terminated/);
+  await assert.rejects(() => h(msg, { headers: { "x-tenant-id": T } }), (e) => /connection terminated/.test(e.message) && !e.permanent);
   assert.equal(rows.length, 0);
   await h(msg, { headers: { "x-tenant-id": T } }); // redelivery
   await h(msg, { headers: { "x-tenant-id": T } }); // duplicate redelivery
@@ -126,16 +136,16 @@ test("write failure on a durable key is RETHROWN (retry / dead-letter), then the
 });
 
 test("non-durable keys keep log-and-skip on a write failure (unchanged behaviour)", async () => {
-  const h = buildAuditKeyHandler({ key: "events.registration.created.v1", exchange: "events.events", handler: handleEventsEvent, rethrow: false });
+  const h = buildAuditKeyHandler({ key: "events.registration.created.v1", exchange: "events.events", handler: handleEventsEvent });
   failNextInsert = true;
   await h(envelope("events.registration.created.v1", { registrationId: "reg-9" }, "evt-created-1"), {});
   assert.equal(rows.length, 0);
 });
 
-test("tenant-gate rejection on a durable key is a permanent skip, never a throw (no retry loop)", async () => {
-  const h = buildAuditKeyHandler({ key: "events.attendance.corrected.v1", exchange: "events.events", handler: handleEventsEvent, rethrow: true });
+test("tenant-gate rejection on a durable key: PERMANENT error (dead-letter at once, no retry loop, nothing stored)", async () => {
+  const h = buildDurableAuditHandler({ key: "events.attendance.corrected.v1", exchange: "events.events", handler: handleEventsEvent });
   const msg = envelope("events.attendance.corrected.v1", { registrationId: "reg-1" });
   msg.data.tenantId = OTHER; // envelope / data tenant mismatch
-  await h(msg, {});
+  await assert.rejects(() => h(msg, {}), (e) => e.permanent === true && e.code === "AUDIT_EVENT_REJECTED");
   assert.equal(rows.length, 0);
 });
